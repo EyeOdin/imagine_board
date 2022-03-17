@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Service
+ServiceTypes=Krita/PythonPlugin
+X-KDE-Library=imagine_board
+X-Python-2-Compatible=false
+X-Krita-Manual=imagine_board_manual.html
+Name=Imagine Board
+Comment=Browse a custom folder and use the image files to create a image board.
