@@ -22,7 +22,9 @@ Imagine Board is a Krita plugin to browse images.
 
 
 ## Preview
-![Picture](https://raw.githubusercontent.com/EyeOdin/Krita-Photobash-Images-Plugin/master/photobash_images_/PREVIEWS/photobash_images_01.png)
+![Picture](https://github.com/EyeOdin/imagine_board/blob/main/imagine_board/PREVIEWS/imagine_board_01.png)
+![Picture](https://github.com/EyeOdin/imagine_board/blob/main/imagine_board/PREVIEWS/imagine_board_02.png)
+![Picture](https://github.com/EyeOdin/imagine_board/blob/main/imagine_board/PREVIEWS/imagine_board_03.png)
 
 
 ## Support
@@ -32,3 +34,4 @@ Support with donations are welcomed to keep the project alive and maintained (an
 <a href="https://www.paypal.com/donate/?hosted_button_id=9FARNUYBC9R3J">
   <img src="https://pics.paypal.com/00/s/NjA2OWU0ZmEtNjQ4MC00MWZhLTk5YzctM2VhZDA1MzgyMDQ0/file.PNG" width="200" alt="Donation Link">
 </a>
+
