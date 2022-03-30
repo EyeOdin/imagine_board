@@ -644,7 +644,7 @@ class ImagineBoard_Docker(DockWidget):
         file_dialog = QFileDialog(QWidget(self))
         file_dialog.setFileMode(QFileDialog.DirectoryOnly)
         directory_path = file_dialog.getExistingDirectory(self, "Select Directory")
-        directory_path = os.path.normpath( directory_path.lower() )
+        # directory_path = os.path.normpath( directory_path.lower() )
         if (directory_path != "" and directory_path != "." and self.directory_path != directory_path):
             self.directory_path = directory_path
             self.imagine_preview.Set_Directory(self.directory_path)
