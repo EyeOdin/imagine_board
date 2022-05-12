@@ -1961,7 +1961,7 @@ class ImagineBoard_Reference(QWidget):
                         # Actions
                         cmenu_pack_line = cmenu.addAction("Pack Line")
                         cmenu_pack_column = cmenu.addAction("Pack Column")
-                        cmenu_pack_optimized = cmenu.addAction("Pack Optimized")
+                        #cmenu_pack_optimized = cmenu.addAction("Pack Optimized")
                         cmenu.addSeparator()
                         cmenu_selection_clean = cmenu.addAction("Selection Clean")
                         action = cmenu.exec_(self.mapToGlobal(event.pos()))
@@ -1970,8 +1970,8 @@ class ImagineBoard_Reference(QWidget):
                             self.Pack_Straight("line")
                         if action == cmenu_pack_column:
                             self.Pack_Straight("column")
-                        if action == cmenu_pack_optimized:
-                            self.Pack_Optimized()
+                        #if action == cmenu_pack_optimized:
+                        #    self.Pack_Optimized()
                         if action == cmenu_selection_clean:
                             self.Selection_Clean(self.selection)
                     else:
