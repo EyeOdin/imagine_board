@@ -1,3 +1,5 @@
+![Picture](https://raw.githubusercontent.com/EyeOdin/Pigment.O/master/imagine_board/PREVIEWS/imagine_board_logo_S.png)
+
 ## Purpose
 
 Imagine Board is a Krita plugin to browse images and create image boards.
