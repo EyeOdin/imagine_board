@@ -1,4 +1,4 @@
-![Picture](https://raw.githubusercontent.com/EyeOdin/Pigment.O/master/imagine_board/PREVIEWS/imagine_board_logo_S.png)
+![Picture](https://github.com/EyeOdin/imagine_board/blob/main/imagine_board/PREVIEWS/imagine_board_logo_S.png)
 
 ## Purpose
 
