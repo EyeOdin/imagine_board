@@ -10,13 +10,13 @@ Imagine Board is a Krita plugin to browse images and create image boards.
 * Preview Slideshow
 * Grid Thumbnail Cache
 * Reference History
+* Mouse and Stylus interface
 * Slider and Number Location
-* Keyword Search with positive and negative keys
+* Search with positive and negative keywords
 * Dynamic File Watcher
 * XML Data of Document
 * Organize Image Folders
-* Mouse and Stylus interface
-* Supports various file formats
+* Supports Various file formats
 * Read ![wiki](https://github.com/EyeOdin/imagine_board/wiki) for more information
 
 
