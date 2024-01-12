@@ -4,21 +4,29 @@
         <text>Imagine Board</text>
 
 
-        <Action name="pykrita_imagine_board_extension_full_screen">
-          <text>Full Screen</text>
-          <shortcut>none</shortcut>
-          <isCheckable>false</isCheckable>
-        </Action>
-
-        <Action name="pykrita_imagine_board_extension_browse_minus">
+        <Action name="imagine_board_extension_browse_minus">
+          <icon></icon>
           <text>Browse Minus</text>
+          <whatsThis></whatsThis>
+          <toolTip></toolTip>
+          <iconText></iconText>
+          <activationFlags></activationFlags>
+          <activationConditions></activationConditions>
           <shortcut>none</shortcut>
           <isCheckable>false</isCheckable>
+          <statusTip></statusTip>
         </Action>
-        <Action name="pykrita_imagine_board_extension_browse_plus">
+        <Action name="imagine_board_extension_browse_plus">
+          <icon></icon>
           <text>Browse Plus</text>
+          <whatsThis></whatsThis>
+          <toolTip></toolTip>
+          <iconText></iconText>
+          <activationFlags></activationFlags>
+          <activationConditions></activationConditions>
           <shortcut>none</shortcut>
           <isCheckable>false</isCheckable>
+          <statusTip></statusTip>
         </Action>
 
 

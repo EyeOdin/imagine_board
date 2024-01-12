@@ -16,6 +16,7 @@
 
 
 #region Imports ####################################################################
+
 # Python Modules
 import sys
 import copy
@@ -23,119 +24,91 @@ import math
 import random
 import os
 import subprocess
-import datetime
-import xml
 import time
 import stat
 import webbrowser
 import zipfile
+import pathlib
+import re
+import urllib
 # Krita Module
 from krita import *
 # PyQt5 Modules
 from PyQt5 import QtWidgets, QtCore, QtGui, uic
-# Imagine Board Modules
-from .imagine_board_modulo import ( 
+# Plugin Modules
+from .imagine_board_calculations import *
+from .imagine_board_extension import ImagineBoard_Extension
+from .imagine_board_modulo import (
     ImagineBoard_Preview,
     ImagineBoard_Grid,
     ImagineBoard_Reference,
-    Thread_Thumbnails,
-    Thread_NameList,
+    Picker_Block,
+    Picker_Color_HUE,
+    Picker_Color_HSV,
     )
-# from .imagine_board_database import ImagineBoard_Database
-from .imagine_board_extension import ImagineBoard_Extension
-from .imagine_board_calculations import *
+
+import os
+from krita import Krita
+from PyQt5.Qt import *
 
 #endregion
 #region Global Variables ###########################################################
+
+# Plugin
 DOCKER_NAME = "Imagine Board"
-imagine_board_version = "2023_04_05"
-thread_function = True
+imagine_board_version = "2024_01_10"
 
 # File Formats
-file_normal = [
-    "*.kra",
-    "*.krz",
-    "*.ora",
-    "*.bmp",
-    "*.gif",
-    "*.jpg",
-    "*.jpeg",
-    "*.png",
-    "*.pbm",
-    "*.pgm",
-    "*.ppm",
-    "*.xbm",
-    "*.xpm",
-    "*.tiff",
-    "*.psd",
-    "*.webp",
-    "*.svg",
-    "*.svgz",
-    "*.zip",
-    ]
-file_backup = [
-    "*.kra~",
-    "*.krz~",
-    "*.ora~",
-    "*.bmp~",
-    "*.gif~",
-    "*.jpg~",
-    "*.jpeg~",
-    "*.png~",
-    "*.pbm~",
-    "*.pgm~",
-    "*.ppm~",
-    "*.xbm~",
-    "*.xpm~",
-    "*.tiff~",
-    "*.psd~",
-    "*.webp~",
-    "*.svg~",
-    "*.svgz~",
-    "*.zip",
-    ]
-file_anim = [
+extensions = [
+    # Native
+    "kra",
+    "krz",
+    "ora",
+    # Static
+    "bmp",
+    "jpg",
+    "jpeg",
+    "png",
+    "pbm",
+    "pgm",
+    "ppm",
+    "xbm",
+    "xpm",
+    "tiff",
+    "jfif",
+    "psd",
+    # Vector
+    "svg",
+    "svgz",
+    # Animation
     "gif",
     "webp",
-    ]
-file_compress = [
+    # Compressed
     "zip",
     ]
-
-# Function
-valid_functions = [
-    "",
-    ">>",
-    "key_add",
-    "key_replace",
-    "key_remove",
-    "key_clean",
-    "key_populate",
-    "rename_order",
-    "rename_age",
-    "rename_random",
-    "save_original",
-    "save_order",
-    "search_null",
-    "search_copy",
-    ]
+# File Sort
+file_normal = []
+for e in extensions:
+    file_normal.append( f"*.{ e }" )
+file_backup = []
+for e in extensions:
+    file_backup.append( f"*.{ e }~" )
+# File Type ( Preview )
+file_static = []
+file_anima = [ "gif", "webp" ]
+file_compact = [ "zip" ]
+for e in extensions:
+    if ( e not in file_anima and e not in file_compact ):
+        file_static.append( f"{ e }" )
+file_vector = [ "svg", "svgz" ]
+file_search = []
+for e in extensions:
+    if e not in file_compact:
+        file_search.append( f"{ e }" )
 
 # Variables
-decimas = 10
 qt_max = 16777215
-# time constants
-segundo = 1 # null
-minuto = 60 # seconds
-hora = 60 # minutes
-dia = 24 # hours
-mes = 30.4167 # days
-ano = 12 # moths
-sec_segundo = segundo
-sec_minuto = minuto * sec_segundo
-sec_hora = hora * sec_minuto
-sec_dia = dia * sec_hora
-sec_mes = mes * sec_dia
-sec_ano = ano * sec_mes
+encode = "utf-8"
 
 #endregion
 
@@ -146,113 +119,21 @@ class ImagineBoard_Docker( DockWidget ):
     """
 
     #region Initialize #############################################################
+
     def __init__( self ):
         super( ImagineBoard_Docker, self ).__init__()
 
         # Construct
-        self.Variables()
         self.User_Interface()
+        self.Variables()
         self.Connections()
         self.Modules()
         self.Style()
         self.Timer()
         self.Extension()
         self.Settings()
+        self.Plugin_Load()
 
-    def Variables( self ):
-        # Variables
-        self.mode_index = 0
-        self.widget_display = False
-        self.widget_float = False
-        self.menu_anim = False
-        self.directory_path = ""
-        self.file_extension = file_normal
-        self.filter_sort = QDir.LocaleAware
-        self.insert_size_bool = False
-        self.image_scale = 1
-        self.images_found = False
-        self.transparent = False
-        self.is_inside = False
-        self.watcher_list = {"dir":[], "file":[]}
-        self.work_hours = 0
-        self.full_screen = False
-        self.dirty = 0
-        self.os_folders = []
-
-        # Color Picker Modules
-        self.pigment_o = None
-        self.MODULE_pigmento_bool = False
-        self.MODULE_pigmento_pyid = "pykrita_pigment_o2"
-
-        # Lists
-        self.list_active = "Folder"
-        self.list_recentdocument = []
-        self.list_pin_ref = []
-
-        # Preview
-        self.preview_path = ""
-        self.preview_index = 0
-        self.preview_max = 0
-        # Slideshow
-        self.slideshow_play = False
-        self.slideshow_sequence = "Linear"
-        self.slideshow_time = 1000
-        self.slideshow_lottery = []
-        # Animation
-        self.anim_playpause = True # True=Play  False=Pause
-        # Compressed
-        self.menu_comp = False
-        self.comp_index = 0
-        self.comp_max = 0
-
-        # Grid
-        self.grid_horz = 3
-        self.grid_vert = 3
-        self.grid_table = ( self.grid_horz * self.grid_vert ) - 1
-        self.grid_max = 0
-        # Thumbnails
-        self.tn_fit_ratio = False
-        self.tn_smooth_scale = Qt.FastTransformation
-        # Lines
-        self.line_preview = 0
-        self.line_grid = 0
-        # Cache amount
-        self.cache_load = 0
-        self.cache_clean = 0
-        self.cache_thread = 1000
-
-        # Reference
-        self.ref_original = False
-        self.ref_limit = 2000
-        self.undocache_size = 100
-        self.undocache_index = 0
-        self.undocache_list = []
-
-        # Clip
-        self.clip_state = False
-        self.clip_px = 0.1
-        self.clip_py = 0.1
-        self.clip_dw = 0.8
-        self.clip_dh = 0.8
-
-        # Path and Pixmaps
-        self.null_path = ""
-        self.null_qpixmap = QPixmap()
-        self.found_path = [self.null_path] * self.grid_table
-        self.found_qpixmap = [self.null_qpixmap] * self.grid_table
-
-        # Function
-        self.function_panel = False
-        self.function_type = "P_%"
-        self.function_value = 100
-        self.function_format = ".png"
-
-        # Annotations
-        self.annotation_kra = False
-        self.annotation_file = False
-
-        # Pixmap
-        self.export_qpixmap = QPixmap()
     def User_Interface( self ):
         # Window
         self.setWindowTitle( DOCKER_NAME )
@@ -264,871 +145,754 @@ class ImagineBoard_Docker( DockWidget ):
 
         # Path Name
         self.directory_plugin = str( os.path.dirname( os.path.realpath( __file__ ) ) )
-        self.image_path = os.path.join( self.directory_plugin, "IMAGE" ) # Create Empty folder ( for web save )
 
         # Widget Docker
-        self.layout = uic.loadUi( os.path.normpath( self.directory_plugin + "/imagine_board_docker.ui" ), QWidget() )
+        self.layout = uic.loadUi( os.path.join( self.directory_plugin, "imagine_board_docker.ui" ), QWidget( self ) )
         self.setWidget( self.layout )
 
         # Settings
-        self.dialog = uic.loadUi( os.path.normpath( self.directory_plugin + "/imagine_board_settings.ui" ), QDialog() )
+        self.dialog = uic.loadUi( os.path.join( self.directory_plugin, "imagine_board_settings.ui" ), QDialog( self ) )
         self.dialog.setWindowTitle( "Imagine Board : Settings" )
-        self.dialog.setWindowFlag( Qt.WindowStaysOnTopHint )
 
         # Preview Extra Panels Boot
-        self.CompPanel_Shrink()
-        self.AnimPanel_Shrink()
+        self.ExtraPanel_Shrink()
+        self.LabelPanel_Shrink()
+
+        # Custom Color Picker Dialog
+        self.picker = uic.loadUi( os.path.join( self.directory_plugin, "imagine_board_picker.ui" ), QWidget( self ) )
+        self.picker.setParent( self )
+        self.picker.close()
+    def Variables( self ):
+        # Pykrita
+        self.imagine_pyid = "pykrita_imagine_board_docker"
+
+        # Paths
+        self.directory_reference = os.path.join( self.directory_plugin, "REFERENCE" )
+        self.directory_code = os.path.join( self.directory_plugin, "CODE" )
+
+        # State
+        self.state_load = False
+        self.state_inside = False
+        self.state_maximized = False
+
+        # UI
+        self.mode_index = 0
+        self.search = ""
+
+        # Items
+        self.sync_list = "Folder" # "Folder" "Reference" "Document"(recent documents)
+        self.sync_type = "Normal" # "Normal" "Backup~"
+        self.sync_sort = "Local Aware"
+        self.insert_size = False
+        self.insert_scale = 1 # Photobask legacy
+        self.scale_method = False
+        # Lists
+        self.list_folder = []
+        self.list_krita = []
+        self.list_reference = []
+        # Folder
+        self.folder_path = None
+        self.folder_shift = []
+        # Files
+        self.file_path = [ None ]
+        self.file_qpixmap = [ None ]
+        self.file_found = False
+        self.file_extension = file_normal
+        self.file_sort = QDir.LocaleAware
+
+        # Preview
+        self.preview_state = "NULL" # "NULL" "STATIC" "ANIM" "COMPACT"
+        self.preview_index = 0
+        self.preview_max = 0
+        self.preview_playpause = True  # True=Play  False=Pause
+        # Preview Slidshow
+        self.slideshow_sequence = "Linear" # "Linear" "Random"
+        self.slideshow_time = 1000
+        self.slideshow_play = False
+        self.slideshow_lottery = []
+
+        # Grid
+        self.grid_size = 200
+        self.grid_fit = False
+
+        # Reference
+        self.ref_kra = False
+        self.ref_import = False
+        self.ref_position = [ 1, 1 ]
+        self.ref_zoom = 1
+        self.ref_board = ""
+        self.ref_doc = None
+        # Label Picker
+        self.picker_mode = None
+        self.picker_pen = QColor( 0, 0, 0 )
+        self.picker_bg = QColor( 0, 0, 0 )
+        self.picker_cancel = QColor( 0, 0, 0 )
+
+        # System
+        self.sow_imagine = False
+        self.sow_dockers = False
+        self.transparent = False
+
+        # Color Picker Module
+        self.pigment_o_module = None
+        self.pigment_o_pyid = "pykrita_pigment_o_docker"
+
+        # Function>>
+        self.function_path_source = None
+        self.function_path_destination = None
+        self.function_panel_drop = False
+        self.function_operation = "NONE"
+        self.function_string = []
+        self.function_keyword = []
+        self.function_number = 1
+        self.function_python_index = 0
+        self.function_python_path = []
+        self.function_python_name = []
+        self.function_python_script = ""
     def Connections( self ):
-        # Compressed Connections
-        self.layout.comp_slider.valueChanged.connect( self.Comp_Slider )
-        self.layout.comp_number.valueChanged.connect( self.Comp_Number )
-        # Animation Connections
-        self.layout.anim_playpause.clicked.connect( lambda: self.Preview_PlayPause( not self.anim_playpause ) )
-        self.layout.anim_frame_back.clicked.connect( self.Preview_Frame_Back )
-        self.layout.anim_frame_forward.clicked.connect( self.Preview_Frame_Forward )
+        # Extra Connections
+        self.layout.extra_playpause.toggled.connect( self.Preview_PlayPause )
+        self.layout.extra_back.clicked.connect( self.Preview_Back )
+        self.layout.extra_forward.clicked.connect( self.Preview_Forward )
+        self.layout.extra_slider.valueChanged.connect( self.Preview_Slider )
+        # Label Connections
+        self.layout.label_text.clicked.connect( self.Label_Text )
+        self.layout.label_font.currentTextChanged.connect( self.Label_Font )
+        self.layout.label_letter.valueChanged.connect( self.Label_Letter )
+        self.picker.hex_code.returnPressed.connect( self.Picker_HEX )
+        self.picker.button_ok.clicked.connect( self.Picker_Ok )
         # Layout Connections
         self.layout.index_slider.valueChanged.connect( self.Index_Slider )
-        self.layout.screen.toggled.connect( self.Full_Screen )
         self.layout.folder.clicked.connect( self.Folder_Open )
         self.layout.slideshow.toggled.connect( self.Preview_SlideShow_Switch )
-        self.layout.thread.clicked.connect( self.Thumbnail_Start )
-        self.layout.undo.clicked.connect( self.Reference_Undo )
-        self.layout.redo.clicked.connect( self.Reference_Redo )
-        self.layout.search.returnPressed.connect( lambda: self.Filter_Keywords( True ) )
+        self.layout.stop.clicked.connect( self.Reference_Stop_Cycle )
+        self.layout.link.toggled.connect( self.Link_KRA )
+        self.layout.search.returnPressed.connect( self.Filter_Search )
         self.layout.index_number.valueChanged.connect( self.Index_Number )
         self.layout.settings.clicked.connect( self.Menu_Settings )
 
-        # Dialog Display
-        self.dialog.menu_transparent.toggled.connect( self.Menu_Transparent )
-        self.dialog.menu_insert_size.toggled.connect( self.Insert_Size )
-        self.dialog.menu_slideshow_sequence.currentTextChanged.connect( self.Menu_SlideShow_Sequence )
-        self.dialog.menu_slideshow_time.timeChanged.connect( self.Menu_SlideShow_Time )
-        self.dialog.menu_fit_ratio.toggled.connect( self.Menu_Fit_Ratio )
-        self.dialog.menu_smooth_scale.toggled.connect( self.Menu_Smooth_Scale )
-        self.dialog.menu_grid_horz.valueChanged.connect( self.Menu_Grid_U )
-        self.dialog.menu_grid_vert.valueChanged.connect( self.Menu_Grid_V )
-        self.dialog.menu_cache_load.valueChanged.connect( self.Menu_Cache_Load )
-        self.dialog.menu_cache_clean.valueChanged.connect( self.Menu_Cache_Clean )
-        self.dialog.menu_cache_thread.valueChanged.connect( self.Menu_Cache_Thread )
-        self.dialog.menu_ref_original.toggled.connect( self.Menu_Ref_Original )
-        self.dialog.menu_ref_limit.valueChanged.connect( self.Menu_Ref_Limit )
-        self.dialog.menu_undocache.valueChanged.connect( self.Menu_Ref_Undocache )
-        self.dialog.annotation_kra_save.toggled.connect( self.AutoSave_KRA )
-        self.dialog.annotation_kra_load.clicked.connect( self.Annotation_KRA_Load )
-        self.dialog.annotation_file_save.toggled.connect( self.AutoSave_File )
-        self.dialog.annotation_file_load.clicked.connect( self.Annotation_FILE_Load )
-        # Sync
-        self.dialog.menu_list.currentTextChanged.connect( self.Menu_List )
-        self.dialog.menu_type.currentTextChanged.connect( self.Menu_Type )
-        self.dialog.menu_sort.currentTextChanged.connect( self.Menu_Sort )
-        # Dialog Information
-        self.dialog.info_title.textChanged.connect( self.Information_Save )
-        self.dialog.info_abstract.textChanged.connect( self.Information_Save )
-        self.dialog.info_keyword.textChanged.connect( self.Information_Save )
-        self.dialog.info_subject.textChanged.connect( self.Information_Save )
-        self.dialog.info_license.textChanged.connect( self.Information_Save )
-        self.dialog.info_language.textChanged.connect( self.Information_Save )
-        self.dialog.info_description.textChanged.connect( self.Information_Save )
-        self.dialog.menu_money_rate.valueChanged.connect( self.Money_Rate )
-        self.dialog.menu_money_total.valueChanged.connect( self.Money_Total )
-        self.dialog.info_contact.itemClicked.connect( self.Information_Copy )
-        # Dialog Function>>
-        self.dialog.source_drop_panel.toggled.connect( self.Function_Panel )
-        self.dialog.source_path_text.textChanged.connect( self.Function_Source_Path_Text )
-        self.dialog.source_path_run.clicked.connect( self.Function_Source_Path_Run )
+        # Dialog Display Item
+        self.dialog.sync_list.currentTextChanged.connect( self.Sync_List )
+        self.dialog.sync_type.currentTextChanged.connect( self.Sync_Type )
+        self.dialog.sync_sort.currentTextChanged.connect( self.Sync_Sort )
+        self.dialog.insert_size.toggled.connect( self.Insert_Size )
+        self.dialog.scale_method.toggled.connect( self.Scale_Method )
+        # Dialog Display Preview
+        self.dialog.slideshow_sequence.currentTextChanged.connect( self.Menu_SlideShow_Sequence )
+        self.dialog.slideshow_time.timeChanged.connect( self.Menu_SlideShow_Time )
+        # Dialog Display Grid
+        self.dialog.grid_size.valueChanged.connect( self.Menu_Grid_Size )
+        self.dialog.grid_fit.toggled.connect( self.Menu_Grid_Fit )
+        # Dialog Display Reference
+        self.dialog.ref_import.toggled.connect( self.Menu_Ref_Import )
+
+        # Dialog Function> Path
+        self.dialog.function_path_source.textChanged.connect( self.Function_Path )
+        self.dialog.function_path_destination.textChanged.connect( self.Function_Path )
+        self.dialog.function_run.clicked.connect( self.Function_Run )
+        # Dialog Function> Options
+        self.dialog.function_panel_drop.toggled.connect( self.Function_Panel_Drop )
         self.dialog.function_operation.currentTextChanged.connect( self.Function_Operation )
-        self.dialog.function_string_add.returnPressed.connect( self.Function_String_Add )
-        self.dialog.function_string_clear.clicked.connect( self.Function_String_Clear )
-        self.dialog.function_list.itemSelectionChanged.connect( self.Function_Operation )
-        self.dialog.function_number.valueChanged.connect( self.Function_Operation )
-        self.dialog.function_destination.textChanged.connect( self.Function_Operation )
-        # Dialog
-        self.dialog.tab_widget.tabBarClicked.connect( self.Menu_Tabs )
+        self.dialog.function_string.returnPressed.connect( self.Function_String_Add )
+        self.dialog.function_number.valueChanged.connect( self.Function_Number )
+        self.dialog.function_keyword.itemPressed.connect( self.Function_String_List )
+        # Dialog Function> Python
+        self.dialog.function_python_name.currentIndexChanged.connect( self.Function_Python_Code )
+        self.dialog.function_python_script.textChanged.connect( self.Function_Python_Editor )
+
+        # Dialog System Options
+        self.dialog.sow_imagine.toggled.connect( self.ShowOnWelcome_Imagine )
+        self.dialog.sow_dockers.toggled.connect( self.ShowOnWelcome_Dockers )
+        self.dialog.transparent.toggled.connect( self.Menu_Transparent )
 
         # Notices
         self.dialog.manual.clicked.connect( self.Menu_Manual )
         self.dialog.license.clicked.connect( self.Menu_License )
 
-        # Event Filter
+        # Event Filter Resize
+        self.layout.preview_view.installEventFilter( self )
+        self.layout.imagine_grid.installEventFilter( self )
+        self.layout.reference_view.installEventFilter( self )
+        self.layout.footer.installEventFilter( self )
+        # Event Filter Others
         self.layout.mode.installEventFilter( self )
         self.layout.folder.installEventFilter( self )
+        self.layout.link.installEventFilter( self )
+        self.dialog.function_keyword.installEventFilter( self )
+        self.picker.installEventFilter( self )
     def Modules( self ):
         #region System
 
         # Directory
-        self.dir = QDir( self.directory_plugin )
+        self.qdir = QDir( self.directory_plugin )
         # File Watcher
         self.file_system_watcher = QFileSystemWatcher( self )
         self.file_system_watcher.directoryChanged.connect( self.Watcher_Display )
 
         #endregion
         #region Preview
+
         self.imagine_preview = ImagineBoard_Preview( self.layout.preview_view )
-        self.imagine_preview.Set_Image_Path( self.image_path )
+        self.imagine_preview.Set_FileSearch( file_search )
         # General
-        self.imagine_preview.SIGNAL_CLICK.connect( self.Preview_Index_Increment )
-        self.imagine_preview.SIGNAL_WHEEL.connect( self.Preview_Index_Increment )
-        self.imagine_preview.SIGNAL_STYLUS.connect( self.Preview_Index_Increment )
         self.imagine_preview.SIGNAL_DRAG.connect( self.Drag_Drop )
-        self.imagine_preview.SIGNAL_PRESS.connect( self.Click_Press )
-        self.imagine_preview.SIGNAL_TEXT.connect( self.Text_Display )
+        self.imagine_preview.SIGNAL_DROP.connect( self.Drop_Inside )
         # Preview
-        self.imagine_preview.SIGNAL_MODE.connect( self.Context_Mode )
-        self.imagine_preview.SIGNAL_FRAME.connect( self.Preview_Frame_Display )
-        self.imagine_preview.SIGNAL_FUNCTION.connect( self.ThreadFunction_Run )
-        self.imagine_preview.SIGNAL_DROPIN.connect( self.Function_Source_Panel_PG )
-        self.imagine_preview.SIGNAL_PIN_PATH.connect( self.Reference_Insert )
+        self.imagine_preview.SIGNAL_MODE.connect( self.Mode_Index )
+        self.imagine_preview.SIGNAL_INCREMENT.connect( self.Preview_Increment )
+        # Menu
+        self.imagine_preview.SIGNAL_FUNCTION.connect( self.Function_Process )
+        self.imagine_preview.SIGNAL_PIN_IMAGE.connect( self.Pin_Image )
         self.imagine_preview.SIGNAL_RANDOM.connect( self.Preview_Random )
+        self.imagine_preview.SIGNAL_FULL_SCREEN.connect( self.Screen_Maximized )
         self.imagine_preview.SIGNAL_LOCATION.connect( self.File_Location )
-        self.imagine_preview.SIGNAL_FULL_SCREEN.connect( self.Screen_Swap )
         self.imagine_preview.SIGNAL_ANALYSE.connect( self.Color_Analyse )
-        self.imagine_preview.SIGNAL_CLIP.connect( self.File_Clip )
         self.imagine_preview.SIGNAL_NEW_DOCUMENT.connect( self.Insert_Document )
         self.imagine_preview.SIGNAL_INSERT_LAYER.connect( self.Insert_Layer )
         self.imagine_preview.SIGNAL_INSERT_REFERENCE.connect( self.Insert_Reference )
-        self.imagine_preview.SIGNAL_ANIM_PANEL.connect( self.Menu_AnimPanel )
-        self.imagine_preview.SIGNAL_COMP.connect( self.Preview_Comp_Increment )
+        # Extra UI
+        self.imagine_preview.SIGNAL_EXTRA_LABEL.connect( self.Preview_Logger )
+        self.imagine_preview.SIGNAL_EXTRA_PANEL.connect( self.Preview_ExtraPanel )
+        self.imagine_preview.SIGNAL_EXTRA_VALUE.connect( self.Extra_Slider_Value )
+        self.imagine_preview.SIGNAL_EXTRA_MAX.connect( self.Extra_Slider_Maximum )
 
         #endregion
         #region Grid
+
         self.imagine_grid = ImagineBoard_Grid( self.layout.imagine_grid )
-        self.imagine_grid.Set_Scale( self.tn_smooth_scale )
-        self.imagine_grid.Set_Image_Path( self.image_path )
+        self.imagine_grid.Set_FileSearch( file_search )
         # General
-        self.imagine_grid.SIGNAL_CLICK.connect( self.Grid_Index_Increment )
-        self.imagine_grid.SIGNAL_WHEEL.connect( self.Grid_Index_Increment )
-        self.imagine_grid.SIGNAL_STYLUS.connect( self.Grid_Index_Increment )
         self.imagine_grid.SIGNAL_DRAG.connect( self.Drag_Drop )
-        self.imagine_grid.SIGNAL_PRESS.connect( self.Click_Press )
-        self.imagine_grid.SIGNAL_TEXT.connect( self.Text_Display )
-        # Grid
-        self.imagine_grid.SIGNAL_PREVIEW.connect( self.Grid_Preview )
-        self.imagine_grid.SIGNAL_FUNCTION.connect( self.ThreadFunction_Run )
-        self.imagine_grid.SIGNAL_DROPIN.connect( self.Function_Source_Panel_PG )
+        self.imagine_grid.SIGNAL_DROP.connect( self.Drop_Inside )
+        # Preview
+        self.imagine_grid.SIGNAL_MODE.connect( self.Mode_Index )
+        self.imagine_grid.SIGNAL_INDEX.connect( self.Preview_Index )
+        # Menu
+        self.imagine_grid.SIGNAL_FUNCTION.connect( self.Function_Process )
+        self.imagine_grid.SIGNAL_PIN_IMAGE.connect( self.Pin_Image )
+        self.imagine_grid.SIGNAL_FULL_SCREEN.connect( self.Screen_Maximized )
         self.imagine_grid.SIGNAL_LOCATION.connect( self.File_Location )
         self.imagine_grid.SIGNAL_ANALYSE.connect( self.Color_Analyse )
-        self.imagine_grid.SIGNAL_PIN_PATH.connect( self.Reference_Insert )
-        self.imagine_grid.SIGNAL_NAME.connect( self.Grid_Name )
         self.imagine_grid.SIGNAL_NEW_DOCUMENT.connect( self.Insert_Document )
         self.imagine_grid.SIGNAL_INSERT_LAYER.connect( self.Insert_Layer )
         self.imagine_grid.SIGNAL_INSERT_REFERENCE.connect( self.Insert_Reference )
 
         #endregion
         #region Reference
-        self.imagine_reference = ImagineBoard_Reference( self.layout.imagine_reference )
-        self.imagine_reference.Set_Layout( self.layout )
-        self.imagine_grid.Set_Image_Path( self.image_path )
+
+        self.imagine_reference = ImagineBoard_Reference( self.layout.reference_view )
+        self.imagine_reference.Set_File_Extension( file_normal )
         # General
         self.imagine_reference.SIGNAL_DRAG.connect( self.Drag_Drop )
-        self.imagine_reference.SIGNAL_PRESS.connect( self.Click_Press )
-        self.imagine_reference.SIGNAL_TEXT.connect( self.Text_Display )
+        self.imagine_reference.SIGNAL_DROP.connect( self.Drop_Inside )
         # Reference
+        self.imagine_reference.SIGNAL_PIN_IMAGE.connect( self.Pin_Image )
+        self.imagine_reference.SIGNAL_PIN_LABEL.connect( self.Pin_Label )
+        self.imagine_reference.SIGNAL_PIN_SAVE.connect( self.Pin_Save )
+        self.imagine_reference.SIGNAL_BOARD_SAVE.connect( self.File_Save_St )
+        self.imagine_reference.SIGNAL_CAMERA.connect( self.Reference_Camera )
+        # Menu
+        self.imagine_reference.SIGNAL_FULL_SCREEN.connect( self.Screen_Maximized )
+        self.imagine_reference.SIGNAL_LOCATION.connect( self.File_Location )
         self.imagine_reference.SIGNAL_ANALYSE.connect( self.Color_Analyse )
-        self.imagine_reference.SIGNAL_SAVE.connect( self.Board_Save )
-        self.imagine_reference.SIGNAL_UNDO.connect( self.Reference_Cache )
-        self.imagine_reference.SIGNAL_CLIP.connect( self.File_Clip )
-        self.imagine_reference.SIGNAL_REFERENCE.connect( self.Function_Source_Panel_R )
+        self.imagine_reference.SIGNAL_NEW_DOCUMENT.connect( self.Insert_Document )
+        self.imagine_reference.SIGNAL_INSERT_LAYER.connect( self.Insert_Layer )
+        self.imagine_reference.SIGNAL_INSERT_REFERENCE.connect( self.Insert_Reference )
+        # UI
+        self.imagine_reference.SIGNAL_PB_VALUE.connect( self.Progress_Value )
+        self.imagine_reference.SIGNAL_PB_MAX.connect( self.Progress_Max )
+        self.imagine_reference.SIGNAL_PACK_STOP.connect( self.Reference_Pack_Stop )
+        self.imagine_reference.SIGNAL_LABEL_PANEL.connect( self.Reference_Label )
+        self.imagine_reference.SIGNAL_LABEL_INFO.connect( self.Reference_Information )
 
         #endregion
-        #region Database
-        # self.imagine_database = ImagineBoard_Database( self.layout.database_view )
+        #region Panel Color
 
-        #endregion
-        #region Thread
+        self.block_pen = Picker_Block( self.layout.label_pen )
+        self.block_pen.Set_Color( QColor( "#e5e5e5" ) )
+        self.block_pen.SIGNAL_COLOR.connect( self.Block_Pen )
 
-        # Thumbnails
-        self.thread_thumbnails = Thread_Thumbnails()
-        self.thread_thumbnails.SIGNAL_IMAGE['QPixmap'].connect( self.Thumbnail_Image )
-        self.thread_thumbnails.SIGNAL_RESET.connect( self.Thumbnail_Reset )
+        self.block_bg = Picker_Block( self.layout.label_bg )
+        self.block_bg.Set_Color( QColor( "#191919" ) )
+        self.block_bg.SIGNAL_COLOR.connect( self.Block_Bg )
 
-        # Name List
-        self.thread_namelist = Thread_NameList()
-        self.thread_namelist.SIGNAL_PROGRESS_VALUE.connect( self.Progress_Value )
-        self.thread_namelist.SIGNAL_PROGRESS_MAX.connect( self.Progress_Max )
-        self.thread_namelist.SIGNAL_COMP_MAX.connect( self.Comp_Range )
-        self.thread_namelist.SIGNAL_NAMELIST.connect( self.Namelist_Input )
+        self.color_hue = Picker_Color_HUE( self.picker.panel_hue )
+        self.color_hue.SIGNAL_COLOR.connect( self.Picker_HSV_1 )
 
-        # Function>>
-        if thread_function == True:
-            self.thread_function = Thread_Function()
-        else:
-            self.thread_function = Thread_Function( self.dialog.function_text )
-        self.thread_function.SIGNAL_PBAR_VALUE.connect( self.ThreadFunction_PBAR_Value )
-        self.thread_function.SIGNAL_PBAR_MAX.connect( self.ThreadFunction_PBAR_Max )
-        self.thread_function.SIGNAL_STRING.connect( self.ThreadFunction_String )
-        self.thread_function.SIGNAL_NUMBER.connect( self.ThreadFunction_Number )
-        self.thread_function.SIGNAL_RESET.connect( self.ThreadFunction_Reset )
-        self.thread_function.SIGNAL_ITEM.connect( self.ThreadFunction_Item )
-        self.thread_function.SIGNAL_NEWPATH.connect( self.ThreadFunction_NewPath )
+        self.color_hsv = Picker_Color_HSV( self.picker.panel_hsv )
+        self.color_hsv.SIGNAL_COLOR.connect( self.Picker_HSV_23 )
 
         #endregion
     def Style( self ):
-        # Icons
-        self.qicon_preview = Krita.instance().icon( 'folder-pictures' )
-        self.qicon_grid = Krita.instance().icon( 'gridbrush' )
-        self.qicon_reference = Krita.instance().icon( 'zoom-fit' )
+        # Icon Mode
+        self.qicon_preview = Krita.instance().icon( "folder-pictures" )
+        self.qicon_grid = Krita.instance().icon( "gridbrush" )
+        self.qicon_reference = Krita.instance().icon( "zoom-fit" )
+        # Icon Packer
+        self.qicon_stop_idle = Krita.instance().icon( "showColoringOff" )
+        self.qicon_stop_abort = Krita.instance().icon( "snapshot-load" )
+        # Icon Animation
+        self.qicon_anim_play = Krita.instance().icon( "animation_play" )
+        self.qicon_anim_pause = Krita.instance().icon( "animation_pause" )
+        # Icon Link
+        self.qicon_link_false = Krita.instance().icon( "chain-broken-icon" )
+        self.qicon_link_true = Krita.instance().icon( "chain-icon" )
+        # Icon Function
+        self.qicon_function_run = Krita.instance().icon( "arrow-right" )
+        self.qicon_function_disable = Krita.instance().icon( "animation_stop" )
 
-        # Widgets
-        self.layout.anim_playpause.setIcon( Krita.instance().icon( 'animation_pause' ) )
-        self.layout.anim_frame_back.setIcon( Krita.instance().icon( 'prevframe' ) )
-        self.layout.anim_frame_forward.setIcon( Krita.instance().icon( 'nextframe' ) )
-
+        # Widgets Animation
+        self.layout.extra_playpause.setIcon( self.qicon_anim_pause )
+        self.layout.extra_back.setIcon( Krita.instance().icon( "prevframe" ) )
+        self.layout.extra_forward.setIcon( Krita.instance().icon( "nextframe" ) )
+        # Widgets Layout
         self.layout.mode.setIcon( self.qicon_preview )
-        self.layout.screen.setIcon( Krita.instance().icon( 'zoom-vertical' ) )
-        self.layout.folder.setIcon( Krita.instance().icon( 'document-open' ) )
-        self.layout.thread.setIcon( Krita.instance().icon( 'document-import' ) )
-        self.layout.slideshow.setIcon( Krita.instance().icon( 'media-playback-start' ) )
-        self.layout.undo.setIcon( Krita.instance().icon( 'draw-arrow-back' ) )
-        self.layout.redo.setIcon( Krita.instance().icon( 'draw-arrow-forward' ) )
-        self.layout.settings.setIcon( Krita.instance().icon( 'settings-button' ) )
+        self.layout.folder.setIcon( Krita.instance().icon( "document-open" ) )
+        self.layout.slideshow.setIcon( Krita.instance().icon( "media-playback-start" ) )
+        self.layout.stop.setIcon( self.qicon_stop_idle )
+        self.layout.link.setIcon( self.qicon_link_false )
+        self.layout.settings.setIcon( Krita.instance().icon( "settings-button" ) )
+        # Widget Dialog
+        self.dialog.function_run.setIcon( self.qicon_function_disable )
 
-        self.dialog.function_string_clear.setIcon( Krita.instance().icon( 'edit-clear-16' ) )
-
-        # ToolTips
+        # ToolTips Layout
         self.layout.mode.setToolTip( "Mode" )
-        self.layout.screen.setToolTip( "Screen" )
         self.layout.folder.setToolTip( "Open Directory" )
-        self.layout.thread.setToolTip( "Thumbnail Cache" )
         self.layout.slideshow.setToolTip( "SlideShow Play" )
-        self.layout.undo.setToolTip( "Undo" )
-        self.layout.redo.setToolTip( "Redo" )
+        self.layout.stop.setToolTip( "Stop" )
+        self.layout.link.setToolTip( "Link" )
         self.layout.search.setToolTip( "Search Contents" )
-        self.layout.index_number.setToolTip( "Image Index" )
+        self.layout.index_number.setToolTip( "Index" )
         self.layout.settings.setToolTip( "Settings" )
-
-        self.layout.anim_playpause.setToolTip( "Play / Pause" )
-        self.layout.anim_frame_back.setToolTip( "Frame Backward" )
-        self.layout.anim_frame_forward.setToolTip( "Frame Forward" )
+        # ToolTips Extra Panel
+        self.layout.extra_playpause.setToolTip( "Play / Pause" )
+        self.layout.extra_back.setToolTip( "Backwards" )
+        self.layout.extra_forward.setToolTip( "Forwards" )
+        # ToolTips Label Panel
+        self.layout.label_text.setToolTip( "Text" )
+        self.layout.label_font.setToolTip( "Font" )
+        self.layout.label_letter.setToolTip( "Letter" )
+        self.layout.label_pen.setToolTip( "#ffffff" )
+        self.layout.label_bg.setToolTip( "#000000" )
 
         # StyleSheets
-        self.layout.anim_panel.setStyleSheet( "#anim_panel{background-color: rgba( 0, 0, 0, 50 );}" )
-        self.layout.progress_bar.setStyleSheet( "#progress_bar{background-color: rgba( 0, 0, 0, 50 );}" )
-        self.dialog.scrollarea_contents_display.setStyleSheet( "#scrollarea_contents_display{background-color: rgba( 0, 0, 0, 20 );}" )
-        self.dialog.scrollarea_contents_sync.setStyleSheet( "#scrollarea_contents_sync{background-color: rgba( 0, 0, 0, 20 );}" )
-        self.dialog.scrollarea_contents_information.setStyleSheet( "#scrollarea_contents_information{background-color: rgba( 0, 0, 0, 20 );}" )
-        self.dialog.scrollarea_contents_function.setStyleSheet( "#scrollarea_contents_function{background-color: rgba( 0, 0, 100, 20 );}" )
-        self.dialog.function_progress.setStyleSheet( "#function_progress{background-color: rgba( 0, 0, 0, 0 );}" )
+        self.layout.extra_panel.setStyleSheet( "#extra_panel{ background-color: rgba( 0, 0, 0, 50 ); }" )
+        self.layout.label_panel.setStyleSheet( "#label_panel{ background-color: rgba( 0, 0, 0, 50 ); }" )
+        self.layout.progress_bar.setStyleSheet( "#progress_bar{ background-color: rgba( 0, 0, 0, 50 ); }" )
+        self.dialog.scroll_area_contents_display.setStyleSheet( "#scroll_area_contents_display{ background-color: rgba( 0, 0, 0, 20 ); }" )
+        self.dialog.scroll_area_contents_function.setStyleSheet( "#scroll_area_contents_function{ background-color: rgba( 0, 0, 0, 20 ); }" )
+        self.dialog.tab_python.setStyleSheet( "#tab_python{ background-color: rgba( 0, 0, 0, 20 ); }" )
+        self.dialog.scroll_area_contents_system.setStyleSheet( "#scroll_area_contents_system{ background-color: rgba( 0, 0, 0, 20 ); }" )
+        self.dialog.progress.setStyleSheet( "#progress{ background-color: rgba( 0, 0, 0, 0 ); }" )
 
         # Function Operations
-        self.dialog.function_operation.addItem( ">>" )
-        self.dialog.function_operation.insertSeparator( 1 )
-        self.dialog.function_operation.addItem( "key_add" )
-        self.dialog.function_operation.addItem( "key_replace" )
-        self.dialog.function_operation.addItem( "key_remove" )
-        self.dialog.function_operation.addItem( "key_clean" )
-        self.dialog.function_operation.addItem( "key_populate" )
-        self.dialog.function_operation.insertSeparator( 7 )
-        self.dialog.function_operation.addItem( "rename_order" )
-        self.dialog.function_operation.addItem( "rename_age" )
-        self.dialog.function_operation.addItem( "rename_random" )
-        self.dialog.function_operation.insertSeparator( 11 )
-        self.dialog.function_operation.addItem( "save_original" )
-        self.dialog.function_operation.addItem( "save_order" )
-        self.dialog.function_operation.insertSeparator( 14 )
-        self.dialog.function_operation.addItem( "search_null" )
-        self.dialog.function_operation.addItem( "search_copy" )
-
-        # Geometry
-        self.layout.screen.setMaximumWidth( 0 )
+        self.Combobox_Operations()
+        self.Combobox_Code()
     def Timer( self ):
-        self.timer = QtCore.QTimer( self )
-        self.timer.timeout.connect( self.Preview_SlideShow_Play )
+        self.qtimer = QtCore.QTimer( self )
+        self.qtimer.timeout.connect( self.Preview_SlideShow_Timer )
     def Extension( self ):
         # Install Extension for Docker
         extension = ImagineBoard_Extension( parent = Krita.instance() )
         Krita.instance().addExtension( extension )
         # Connect Extension Signals
-        extension.SIGNAL_FULL_SCREEN.connect( self.Screen_Swap )
         extension.SIGNAL_BROWSE.connect( self.Shortcut_Browse )
     def Settings( self ):
-        # Menu Mode
-        mode_index = Krita.instance().readSetting( "Imagine Board", "mode_index", "" )
-        if mode_index == "":
-            Krita.instance().writeSetting( "Imagine Board", "mode_index", str( 0 ) )
+        #region Layout
+
+        self.mode_index = self.Set_Read( "INT", "mode_index", self.mode_index )
+        self.preview_index = self.Set_Read( "INT", "preview_index", self.preview_index )
+        self.folder_path = self.Set_Read( "STR", "folder_path", self.folder_path )
+        self.search = self.Set_Read( "STR", "search", self.search )
+
+        #endregion
+        #region Dialog Display
+
+        # Items
+        self.sync_list = self.Set_Read( "STR", "sync_list", self.sync_list )
+        self.sync_type = self.Set_Read( "STR", "sync_type", self.sync_type )
+        self.sync_sort = self.Set_Read( "STR", "sync_sort", self.sync_sort )
+        self.insert_size = self.Set_Read( "EVAL", "insert_size", self.insert_size )
+        self.scale_method = self.Set_Read( "EVAL", "scale_method", self.scale_method )
+        # Preview
+        self.slideshow_sequence = self.Set_Read( "STR", "slideshow_sequence", self.slideshow_sequence )
+        self.slideshow_time = self.Set_Read( "INT", "slideshow_time", self.slideshow_time )
+        # Grid
+        self.grid_size = self.Set_Read( "INT", "grid_size", self.grid_size )
+        self.grid_fit = self.Set_Read( "EVAL", "grid_fit", self.grid_fit )
+        # Reference
+        self.ref_import = self.Set_Read( "EVAL", "ref_import", self.ref_import )
+
+        #endregion
+        #region Dialog Function
+
+        self.function_panel_drop = self.Set_Read( "EVAL", "function_panel_drop", self.function_panel_drop )
+        self.function_string = self.Set_Read( "EVAL", "function_string", self.function_string  )
+
+        #endregion
+        #region Dialog System
+
+        self.sow_imagine = self.Set_Read( "EVAL", "sow_imagine", self.sow_imagine )
+        self.sow_dockers = self.Set_Read( "EVAL", "sow_dockers", self.sow_dockers )
+        self.transparent = self.Set_Read( "EVAL", "transparent", self.transparent )
+
+        #endregion
+        #region Reference
+
+        self.ref_kra = self.Set_Read( "EVAL", "ref_kra", self.ref_kra )
+        self.ref_position = self.Set_Read( "EVAL", "ref_position", self.ref_position )
+        self.ref_zoom = self.Set_Read( "EVAL", "ref_zoom", self.ref_zoom )
+        self.ref_board = self.Set_Read( "STR", "ref_board", self.ref_board )
+
+        #endregion
+    def Plugin_Load( self ):
+        try:
+            self.Loader()
+        except Exception as e:
+            self.Message_Warnning( "ERROR", f"Load \n{ e }" )
+            self.Variables()
+            self.Loader()
+
+    def Loader( self ):
+        #region Layout
+
+        # Folder
+        self.Folder_Load( self.folder_path, self.preview_index )
+        self.layout.search.setText( self.search )
+
+        # Board
+        self.layout.link.setChecked( self.ref_kra )
+
+        # Index
+        self.Mode_Index( self.mode_index )
+
+        #endregion
+        #region Dialog Display
+
+        # Item
+        self.dialog.sync_list.setCurrentText( self.sync_list )
+        self.dialog.sync_type.setCurrentText( self.sync_type )
+        self.dialog.sync_sort.setCurrentText( self.sync_sort )
+        self.dialog.insert_size.setChecked( self.insert_size )
+        self.dialog.scale_method.setChecked( self.scale_method )
+        # Preview
+        self.dialog.slideshow_sequence.setCurrentText( self.slideshow_sequence )
+        tempo = QTime( 0,0,0 ).addMSecs( self.slideshow_time )
+        self.dialog.slideshow_time.setTime( tempo )
+        # Grid
+        self.dialog.grid_size.setValue( self.grid_size )
+        self.dialog.grid_fit.setChecked( self.grid_fit )
+        # Reference
+        self.dialog.ref_import.setChecked( self.ref_import )
+
+        #endregion
+        #region Dialog Function
+
+        self.dialog.function_panel_drop.setChecked( self.function_panel_drop )
+        for item in self.function_string:
+            self.dialog.function_keyword.addItem( item )
+
+        #endregion
+        #region Dialog System
+
+        self.dialog.sow_imagine.setChecked( self.sow_imagine )
+        self.dialog.sow_dockers.setChecked( self.sow_dockers )
+        self.dialog.transparent.setChecked( self.transparent )
+
+        #endregion
+    def Set_Read( self, mode, entry, default ):
+        setting = Krita.instance().readSetting( "Imagine Board", entry, "" )
+        if setting == "":
+            read = default
         else:
-            self.mode_index = int( mode_index )
+            try:
+                if mode == "EVAL":
+                    read = eval( setting )
+                elif mode == "STR":
+                    read = str( setting )
+                elif mode == "INT":
+                    read = int( setting )
+            except:
+                read = default
+        Krita.instance().writeSetting( "Imagine Board", entry, str( read ) )
+        return read
 
     #endregion
-    #region Settings ###############################################################
-    def Settings_Load( self ):
-        if self.widget_display == False:
-            # Read
-            self.Read_Layout()
-            self.Read_Dialog()
+    #region Interface ##############################################################
 
-            # Control Variable
-            self.widget_display = True
-
-            # Setup
-            self.Menu_Grid_UV( self.grid_horz, self.grid_vert )
-            self.Folder_Changer( [self.directory_path, False] )
-            self.Preview_GoTo( self.preview_index )
-            self.Board_Loader( self.list_pin_ref )
-
-    def Read_Layout( self ):
-        # Directory Path
-        directory_path = str( Krita.instance().readSetting( "Imagine Board", "directory_path", "" ) )
-        if directory_path == "":
-            Krita.instance().writeSetting( "Imagine Board", "directory_path", "" )
-        else:
-            self.directory_path = directory_path
-
-        # Search
-        search = str( Krita.instance().readSetting( "Imagine Board", "search", "" ) )
-        if search == "":
-            Krita.instance().writeSetting( "Imagine Board", "search", "" )
-        else:
-            self.layout.search.setText( search )
-
-        # Preview Index
-        preview_index = Krita.instance().readSetting( "Imagine Board", "preview_index", "" )
-        if preview_index == "":
-            Krita.instance().writeSetting( "Imagine Board", "preview_index", str( 0 ) )
-        else:
-            self.preview_index = int( preview_index )
-
-        # References
-        references = Krita.instance().readSetting( "Imagine Board", "list_pin_ref", "" )
-        if references == "":
-            Krita.instance().writeSetting( "Imagine Board", "list_pin_ref", "" )
-        else:
-            # Dictionary
-            list_pin_ref = eval( references )
-            self.list_pin_ref = list_pin_ref
-            # Save
-            if len( list_pin_ref ) != len( self.list_pin_ref ):
-                Krita.instance().writeSetting( "Imagine Board", "list_pin_ref", str( self.list_pin_ref ) )
-
-    def Read_Dialog( self ):
-        # Dialog Display
-        try:
-            # Window Transparency
-            transparent = Krita.instance().readSetting( "Imagine Board", "transparent", "" )
-            if transparent == "":
-                Krita.instance().writeSetting( "Imagine Board", "transparent", "False" )
-            else:
-                self.dialog.menu_transparent.setChecked( eval( transparent ) )
-            # Insert Size
-            insert_size = Krita.instance().readSetting( "Imagine Board", "insert_size", "" )
-            if insert_size == "":
-                Krita.instance().writeSetting( "Imagine Board", "insert_size", "False" )
-            else:
-                self.dialog.menu_insert_size.setChecked( eval( insert_size ) )
-
-            # Slideshow Sequence
-            slideshow_sequence = Krita.instance().readSetting( "Imagine Board", "slideshow_sequence", "" )
-            if slideshow_sequence == "":
-                Krita.instance().writeSetting( "Imagine Board", "slideshow_sequence", "Linear" )
-            else:
-                self.dialog.menu_slideshow_sequence.setCurrentText( str( slideshow_sequence ) )
-            # Slideshow Time
-            ms = Krita.instance().readSetting( "Imagine Board", "slideshow_time", "" )
-            if ms == "":
-                Krita.instance().writeSetting( "Imagine Board", "slideshow_time", str( 1000 ) )
-            else:
-                tempo = QTime( 0,0,0 ).addMSecs( int( ms ) )
-                self.dialog.menu_slideshow_time.setTime( tempo )
-
-            # Thumbnail Fit Ratio
-            fit_ratio = Krita.instance().readSetting( "Imagine Board", "fit_ratio", "" )
-            if fit_ratio == "":
-                Krita.instance().writeSetting( "Imagine Board", "fit_ratio", "False" )
-            else:
-                self.dialog.menu_fit_ratio.setChecked( eval( fit_ratio ) )
-            # Thumbnail Smooth Scale
-            smooth_scale = Krita.instance().readSetting( "Imagine Board", "smooth_scale", "" )
-            if smooth_scale == "":
-                Krita.instance().writeSetting( "Imagine Board", "smooth_scale", "False" )
-            else:
-                self.dialog.menu_smooth_scale.setChecked( eval( smooth_scale ) )
-            # Grid U
-            grid_u = Krita.instance().readSetting( "Imagine Board", "grid_u", "" )
-            if grid_u == "":
-                self.grid_horz = 3
-                Krita.instance().writeSetting( "Imagine Board", "grid_u", str( 3 ) )
-            else:
-                self.grid_horz = grid_u
-            # Grid V
-            grid_v = Krita.instance().readSetting( "Imagine Board", "grid_v", "" )
-            if grid_v == "":
-                self.grid_vert = 3
-                Krita.instance().writeSetting( "Imagine Board", "grid_v", str( 3 ) )
-            else:
-                self.grid_vert = grid_v
-
-            # Cache Clean
-            cache_clean = Krita.instance().readSetting( "Imagine Board", "cache_clean", "" )
-            if cache_clean == "":
-                Krita.instance().writeSetting( "Imagine Board", "cache_clean", str( 0 ) )
-            else:
-                self.dialog.menu_cache_clean.setValue( int( cache_clean ) )
-            # Cache Load
-            cache_load = Krita.instance().readSetting( "Imagine Board", "cache_load", "" )
-            if cache_load == "":
-                Krita.instance().writeSetting( "Imagine Board", "cache_load", str( 0 ) )
-            else:
-                self.dialog.menu_cache_load.setValue( int( cache_load ) )
-            # Cache Thread
-            cache_thread = Krita.instance().readSetting( "Imagine Board", "cache_thread", "" )
-            if cache_thread == "":
-                Krita.instance().writeSetting( "Imagine Board", "cache_thread", str( 0 ) )
-            else:
-                self.dialog.menu_cache_thread.setValue( int( cache_thread ) )
-
-            # Reference Import
-            ref_original = Krita.instance().readSetting( "Imagine Board", "ref_original", "" )
-            if ref_original == "":
-                Krita.instance().writeSetting( "Imagine Board", "ref_original", "False" )
-            else:
-                self.dialog.menu_ref_original.setChecked( eval( ref_original ) )
-            # Reference Limit
-            ref_limit = Krita.instance().readSetting( "Imagine Board", "ref_limit", "" )
-            if ref_limit == "":
-                Krita.instance().writeSetting( "Imagine Board", "ref_limit", str( 1000 ) )
-            else:
-                self.dialog.menu_ref_limit.setValue( int( ref_limit ) )
-            # Undo Cache Size
-            undocache_size = Krita.instance().readSetting( "Imagine Board", "undocache_size", "" )
-            if undocache_size == "":
-                Krita.instance().writeSetting( "Imagine Board", "undocache_size", str( 100 ) )
-            else:
-                self.dialog.menu_undocache.setValue( int( undocache_size ) )
-        except:
-            pass
-
-        # Dialog Sync
-        try:
-            # Lists
-            list_active = Krita.instance().readSetting( "Imagine Board", "list_active", "" )
-            if list_active == "":
-                Krita.instance().writeSetting( "Imagine Board", "list_active", "" )
-            else:
-                self.dialog.menu_list.setCurrentText( str( list_active ) )
-            # Directory File
-            directory_file = Krita.instance().readSetting( "Imagine Board", "directory_file", "" )
-            if directory_file == "":
-                Krita.instance().writeSetting( "Imagine Board", "directory_file", "" )
-            else:
-                self.dialog.menu_type.setCurrentText( str( directory_file ) )
-            # Sort
-            sort = Krita.instance().readSetting( "Imagine Board", "sort", "" )
-            if sort == "":
-                Krita.instance().writeSetting( "Imagine Board", "sort", "Local Aware" )
-            else:
-                self.dialog.menu_sort.setCurrentText( str( sort ) )
-        except:
-            pass
-
-        # Dialog Function
-        try:
-            # Drop Preview
-            function_panel = Krita.instance().readSetting( "Imagine Board", "function_panel", "" )
-            if function_panel == "":
-                Krita.instance().writeSetting( "Imagine Board", "function_panel", "False" )
-            else:
-                self.dialog.source_drop_panel.setChecked( eval( function_panel ) )
-
-            # Function String
-            keywords = Application.readSetting( "Imagine Board", "function_string", "" )
-            if keywords == "":
-                Krita.instance().writeSetting( "Imagine Board", "function_string", "" )
-            else:
-                key_split = str( keywords ).split( "," )
-                for k in key_split:
-                    if ( k != "," and k != "" ):
-                        self.dialog.function_list.addItem( k )
-        except:
-            pass
-
-    #endregion
-    #region Menu Signals ###########################################################
-    # Basic UI
+    # User Interface
     def Mode_Index( self, index ):
-        # prepare cycle
-        self.Display_Shrink()
-        self.AnimPanel_Shrink()
-
         # Variables
-        width = 20
+        h_bar = 15
+        w_icon = 20
+        w_number = 180
+
+        # States
         if index == 0:
-            # Icon
-            self.layout.mode.setIcon( self.qicon_preview )
-            # UI
             self.layout.stacked_widget.setCurrentIndex( 0 )
-            self.Widget_Adjust(
-                [20, 20, 0, 0, 0],
-                [120, 0],
-                [16777215, 0],
-                [15, 15],
-                )
-            # Enable
-            self.Index_Enable( True )
+            self.layout.mode.setIcon( self.qicon_preview )
+            self.Footer_Widgets( slider=h_bar, folder=w_icon, slideshow=w_icon, index=w_number )
         if index == 1:
-            # Icon
-            self.layout.mode.setIcon( self.qicon_grid )
-            # UI
             self.layout.stacked_widget.setCurrentIndex( 1 )
-            self.Widget_Adjust(
-                [20, 0, 20, 0, 0],
-                [120, 0],
-                [16777215, 0],
-                [15, 15],
-                )
-            # Enable
-            self.Index_Enable( True )
+            self.layout.mode.setIcon( self.qicon_grid )
+            self.Footer_Widgets( slider=h_bar, folder=w_icon, slideshow=w_icon, index=w_number )
         if index == 2:
-            # Icon
-            self.layout.mode.setIcon( self.qicon_reference )
-            # UI
             self.layout.stacked_widget.setCurrentIndex( 2 )
-            self.Widget_Adjust(
-                [0, 0, 0, 20, 20],
-                [0, 120],
-                [0, 16777215],
-                [0, 0],
-                )
-            # Enable
-            self.Index_Enable( False )
-        if index == 3:
-            # Icon
             self.layout.mode.setIcon( self.qicon_reference )
-            # UI
-            self.layout.stacked_widget.setCurrentIndex( 3 )
-            self.Widget_Adjust(
-                [0, 0, 0, 20, 20],
-                [0, 120],
-                [0, 16777215],
-                [0, 0],
-                )
-            # Enable
-            self.Index_Enable( False )
+            self.Footer_Widgets( stop=w_icon, link=w_icon, search=False, zoom=w_number )
 
         # update cycle
-        if ( self.widget_display == True and self.mode_index != index ): # After a search with null results or reference board change, this ensure other modes update
+        if self.mode_index != index:
             self.mode_index = index
-            self.imagine_preview.Clip_Off()
-            self.List_Reference()
             self.Display_Update()
-        self.dirty = 5
-        self.Update_Size()
+            self.Update_Size()
         # Save
         Krita.instance().writeSetting( "Imagine Board", "mode_index", str( self.mode_index ) )
-    def Display_Shrink( self ):
-        self.Widget_Adjust(
-            [0, 0, 0, 0, 0],
-            [0, 0],
-            [0, 0],
-            [0, 0],
-            )
-    def Widget_Adjust( self, icon, numbers, widget_x, widget_y ):
+    def Footer_Widgets( self, slider=0, folder=0, slideshow=0, stop=0, link=0, search=True, index=0, zoom=0 ):
+        # Top
+        self.layout.index_slider.setMinimumHeight( slider )
+        self.layout.index_slider.setMaximumHeight( slider )
+
         # Icons
-        self.layout.folder.setMaximumWidth( icon[0] )
-        self.layout.slideshow.setMaximumWidth( icon[1] )
-        self.layout.thread.setMaximumWidth( icon[2] )
-        self.layout.undo.setMaximumWidth( icon[3] )
-        self.layout.redo.setMaximumWidth( icon[4] )
-        # Numbers
-        self.layout.index_number.setMaximumWidth( numbers[0] )
-        self.layout.count_reference.setMaximumWidth( numbers[1] )
-        # Widgets X
-        self.layout.search.setMaximumWidth( widget_x[0] )
-        self.layout.label.setMaximumWidth( widget_x[1] )
-        # Widgets Y
-        self.layout.index_slider.setMinimumHeight( widget_y[0] )
-        self.layout.index_slider.setMaximumHeight( widget_y[1] )
-    def Transparent_Shift( self ):
-        # Geometry Changes
-        if self.transparent == True:
-            is_floating = self.isFloating()
-            if ( is_floating == True and self.is_inside == False ):
-                tr = True
-                self.Footer_Scale( False, False, False )
-            else:
-                tr = False
-                if ( self.mode_index == 0 or self.mode_index == 1 ):
-                    self.Footer_Scale( True, True, True )
-                if self.mode_index == 2:
-                    self.Footer_Scale( True, False, True )
-        else:
-            tr = False
-            if ( self.mode_index == 0 or self.mode_index == 1 ):
-                self.Footer_Scale( True, True, True )
-            if self.mode_index == 2:
-                self.Footer_Scale( True, False, True )
+        self.layout.folder.setMinimumWidth( folder )
+        self.layout.folder.setMaximumWidth( folder )
+        self.layout.slideshow.setMinimumWidth( slideshow )
+        self.layout.slideshow.setMaximumWidth( slideshow )
+        self.layout.stop.setMinimumWidth( stop )
+        self.layout.stop.setMaximumWidth( stop )
+        self.layout.link.setMinimumWidth( link )
+        self.layout.link.setMaximumWidth( link )
+
+        # Middle
+        self.layout.search.setEnabled( search )
+        self.layout.index_number.setMaximumWidth( index )
+        self.layout.zoom.setMaximumWidth( zoom )
+
         # Update
-        self.setAttribute( Qt.WA_NoSystemBackground, tr )
-        self.dirty = 5
-    def Footer_Scale( self, progress_bar, index_slider, horizontal_buttons ):
+        self.update()
+    def Screen_Maximized( self, boolean ):
+        if boolean == True:
+            # Full Screen
+            self.setFloating( True )
+            self.showMaximized()
+        else:
+            # Place it on the Docker
+            self.setFloating( False )
+            self.showNormal()
+            # Raise Docker to be Visable
+            plugin = "pykrita_imagine_board_docker"
+            dockers = Krita.instance().dockers()
+            for i in range( 0, len( dockers ) ):
+                item = dockers[i]
+                if item.objectName() == plugin:
+                    item.raise_()
+                    break
+        # Update
+        self.Update_Size()
+
+    # Items
+    def Sync_List( self, sync_list ):
+        # Checks
+        self.sync_list = sync_list
+        # Watcher
+        if self.sync_list == "Krita":
+            self.Recent_Documents( self.list_krita )
+        # Display
+        self.Filter_Search()
+        # Finish
+        Krita.instance().writeSetting( "Imagine Board", "sync_list", str( self.sync_list ) )
+        # self.update()
+    def Sync_Type( self, sync_type ):
+        # Directory
+        self.sync_type = sync_type
+        if sync_type == "Normal": self.file_extension = file_normal
+        if sync_type == "BackUp~":self.file_extension = file_backup
+        # Display
+        self.Filter_Search()
+        # Save
+        Krita.instance().writeSetting( "Imagine Board", "sync_type", str( self.sync_type ) )
+    def Sync_Sort( self, sync_sort ):
+        # Sorting
+        self.sync_sort = sync_sort
+        if sync_sort == "Local Aware":self.file_sort = QDir.LocaleAware
+        if sync_sort == "Name":       self.file_sort = QDir.Name
+        if sync_sort == "Time":       self.file_sort = QDir.Time
+        if sync_sort == "Size":       self.file_sort = QDir.Size
+        if sync_sort == "Type":       self.file_sort = QDir.Type
+        if sync_sort == "Unsorted":   self.file_sort = QDir.Unsorted
+        if sync_sort == "No Sort":    self.file_sort = QDir.NoSort
+        if sync_sort == "Reversed":   self.file_sort = QDir.Reversed
+        if sync_sort == "Ignore Case":self.file_sort = QDir.IgnoreCase
+        # Display
+        self.Filter_Search()
+        # Save
+        Krita.instance().writeSetting( "Imagine Board", "sync_sort", str( self.sync_sort ) )
+    def Insert_Size( self, insert_size ):
+        self.insert_size = insert_size
+        Krita.instance().writeSetting( "Imagine Board", "insert_size", str( self.insert_size ) )
+    def Scale_Method( self, scale_method ):
+        self.scale_method = scale_method
+        if scale_method == False:
+            method = Qt.FastTransformation
+        if scale_method == True:
+            method = Qt.SmoothTransformation
+        self.imagine_preview.Set_Scale_Method( method )
+        self.imagine_grid.Set_Scale_Method( method )
+        self.imagine_reference.Set_Scale_Method( method )
+        Krita.instance().writeSetting( "Imagine Board", "scale_method", str( self.scale_method ) )
+
+    # Preview
+    def Menu_SlideShow_Sequence( self, slideshow_sequence ):
+        self.slideshow_sequence = slideshow_sequence
+        Krita.instance().writeSetting( "Imagine Board", "slideshow_sequence", str( self.slideshow_sequence ) )
+    def Menu_SlideShow_Time( self, qtime ):
+        self.slideshow_time = QTime( 0, 0, 0 ).msecsTo( qtime )
+        Krita.instance().writeSetting( "Imagine Board", "slideshow_time", str( self.slideshow_time ) )
+    # Grid
+    def Menu_Grid_Size( self, value ):
+        self.grid_size = value
+        self.imagine_grid.Grid_Size( self.grid_size )
+        self.Display_Update()
+        Krita.instance().writeSetting( "Imagine Board", "grid_size", str( self.grid_size ) )
+    def Menu_Grid_Fit( self, boolean ):
+        self.grid_fit = boolean
+        self.imagine_grid.Grid_Fit( self.grid_fit )
+        Krita.instance().writeSetting( "Imagine Board", "grid_fit", str( self.grid_fit ) )
+    # Reference
+    def Menu_Ref_Import( self, ref_import ):
+        self.ref_import = ref_import
+        Krita.instance().writeSetting( "Imagine Board", "ref_import", str( self.ref_import ) )
+
+    # Combobox
+    def Combobox_Operations( self ):
+        self.dialog.function_operation.addItem( "NONE" )
+        self.dialog.function_operation.insertSeparator( 1 )
+        self.dialog.function_operation.addItem( "KEY_ADD" )
+        self.dialog.function_operation.addItem( "KEY_REPLACE" )
+        self.dialog.function_operation.addItem( "KEY_REMOVE" )
+        self.dialog.function_operation.addItem( "KEY_CLEAN" )
+        self.dialog.function_operation.insertSeparator( 6 )
+        self.dialog.function_operation.addItem( "RENAME_ORDER" )
+        self.dialog.function_operation.insertSeparator( 8 )
+        self.dialog.function_operation.addItem( "SAVE_ORDER" )
+        self.dialog.function_operation.addItem( "SAVE_ORIGINAL" )
+        self.dialog.function_operation.insertSeparator( 11 )
+        self.dialog.function_operation.addItem( "SEARCH_KEY" )
+        self.dialog.function_operation.addItem( "SEARCH_NULL" )
+        self.dialog.function_operation.addItem( "SEARCH_COPY" )
+        self.dialog.function_operation.insertSeparator( 15 )
+        self.dialog.function_operation.addItem( "PYTHON_SCRIPT" )
+    def Combobox_Code( self ):
+        # Files
+        qdir = QDir( self.directory_code )
+        qdir.setSorting( QDir.LocaleAware )
+        qdir.setFilter( QDir.Files | QDir.NoSymLinks | QDir.NoDotAndDotDot )
+        qdir.setNameFilters( [ "*.py" ] )
+        python_files = qdir.entryInfoList()
+
+        # ComboBox Construct
+        function_python_path = []
+        for i in range( 0, len( python_files ) ):
+            item = os.path.abspath( python_files[i].filePath() )
+            function_python_path.append( item )
+
+        # Replace
+        if self.function_python_path != function_python_path:
+            # Variables
+            self.function_python_path = function_python_path
+            # Create Name
+            self.dialog.function_python_name.clear()
+            for path in self.function_python_path:
+                name = os.path.basename( path )
+                self.dialog.function_python_name.addItem( name )
+
+            # Editor
+            self.Python_Read( self.function_python_path[0] )
+
+    # Show on Welcome
+    def ShowOnWelcome_Imagine( self, sow_imagine ):
+        self.sow_imagine = sow_imagine
+        try:self.setProperty( "ShowOnWelcomePage", sow_imagine )
+        except:pass
+        Krita.instance().writeSetting( "Imagine Board", "sow_imagine", str( self.sow_imagine ) )
+    def ShowOnWelcome_Dockers( self, sow_dockers ):
+        self.sow_dockers = sow_dockers
+        Krita.instance().writeSetting( "Imagine Board", "sow_dockers", str( self.sow_dockers ) )
+    def Welcome_Dockers( self ):
+        # Imagine Board
+        if self.sow_imagine == True:
+            try:self.setProperty( "ShowOnWelcomePage", True )
+            except:pass
+        # Dockers
+        if self.sow_dockers == True:
+            dockers = Krita.instance().dockers()
+            for d in dockers:
+                try:d.setProperty( "ShowOnWelcomePage", True )
+                except:pass
+    # Transparent
+    def Menu_Transparent( self, transparent ):
+        self.transparent = transparent
+        self.Transparent_Shift()
+        Krita.instance().writeSetting( "Imagine Board", "transparent", str( self.transparent ) )
+
+    # Transparent
+    def Transparent_Shift( self ):
+        if self.transparent == True and self.isFloating() == True and self.state_inside == False:
+            self.Footer_Scale( False )
+            self.setAttribute( Qt.WA_TranslucentBackground, True )
+        else:
+            self.Footer_Scale( True )
+            self.setAttribute( Qt.WA_TranslucentBackground, False )
+            self.setAttribute( Qt.WA_NoSystemBackground, False )
+        self.update()
+    def Footer_Scale( self, boolean ):
         # Progress Bar
-        if progress_bar == True:
+        if boolean == True:
             self.layout.progress_bar.setMinimumHeight( 5 )
             self.layout.progress_bar.setMaximumHeight( 5 )
-        if progress_bar == False:
+        else:
             self.layout.progress_bar.setMinimumHeight( 0 )
             self.layout.progress_bar.setMaximumHeight( 0 )
 
         # Slider
-        if index_slider == True:
+        if ( boolean == True and self.mode_index in ( 0, 1 ) ):
             self.layout.index_slider.setMinimumHeight( 15 )
             self.layout.index_slider.setMaximumHeight( 15 )
-        if index_slider == False:
+        else:
             self.layout.index_slider.setMinimumHeight( 0 )
             self.layout.index_slider.setMaximumHeight( 0 )
 
-        # Horizontal Buttons
-        if horizontal_buttons == True:
-            self.layout.horizontal_buttons.setMinimumHeight( 25 )
-            self.layout.horizontal_buttons.setMaximumHeight( 25 )
-        if horizontal_buttons == False:
-            self.layout.horizontal_buttons.setMinimumHeight( 0 )
-            self.layout.horizontal_buttons.setMaximumHeight( 0 )
-
-    # Compression
-    def Menu_CompPanel( self, comp ):
-        # State
-        if self.mode_index == 0 and comp == True:
-            value = 20
-            margin = 5
-        else:
-            value = 0
-            margin = 0
-        # Widgets
-        self.layout.comp_slider.setMinimumHeight( value )
-        self.layout.comp_slider.setMaximumHeight( value )
-        self.layout.comp_number.setMinimumHeight( value )
-        self.layout.comp_number.setMaximumHeight( value )
-        self.layout.comp_panel_layout.setContentsMargins( 0,0,0,margin )
-        # update cycle
-        if self.menu_comp != comp:
-            self.menu_comp = comp
-            self.dirty = 5
-    def CompPanel_Shrink( self ):
-        self.layout.comp_slider.setMinimumHeight( 0 )
-        self.layout.comp_slider.setMaximumHeight( 0 )
-        self.layout.comp_number.setMinimumHeight( 0 )
-        self.layout.comp_number.setMaximumHeight( 0 )
-        self.layout.comp_panel_layout.setContentsMargins( 0,0,0,0 )
-    # Animation
-    def Menu_AnimPanel( self, anim ):
-        # State
-        if self.mode_index == 0 and anim == True:
-            value = 20
-            margin = 5
-        else:
-            value = 0
-            margin = 0
-        # Widgets
-        self.layout.anim_panel.setMinimumHeight( value )
-        self.layout.anim_panel.setMaximumHeight( value )
-        self.layout.anim_playpause.setMinimumHeight( value )
-        self.layout.anim_playpause.setMaximumHeight( value )
-        self.layout.anim_frame_back.setMinimumHeight( value )
-        self.layout.anim_frame_back.setMaximumHeight( value )
-        self.layout.anim_frame_forward.setMinimumHeight( value )
-        self.layout.anim_frame_forward.setMaximumHeight( value )
-        self.layout.anim_frame_display.setMinimumHeight( value )
-        self.layout.anim_frame_display.setMaximumHeight( value )
-        self.layout.anim_panel_layout.setContentsMargins( 0,0,0,margin )
-        # update cycle
-        if self.menu_anim != anim:
-            self.menu_anim = anim
-            self.dirty = 5
-    def AnimPanel_Shrink( self ):
-        self.layout.anim_panel.setMinimumHeight( 0 )
-        self.layout.anim_panel.setMaximumHeight( 0 )
-        self.layout.anim_playpause.setMinimumHeight( 0 )
-        self.layout.anim_playpause.setMaximumHeight( 0 )
-        self.layout.anim_frame_back.setMinimumHeight( 0 )
-        self.layout.anim_frame_back.setMaximumHeight( 0 )
-        self.layout.anim_frame_forward.setMinimumHeight( 0 )
-        self.layout.anim_frame_forward.setMaximumHeight( 0 )
-        self.layout.anim_frame_display.setMinimumHeight( 0 )
-        self.layout.anim_frame_display.setMaximumHeight( 0 )
-        self.layout.anim_panel_layout.setContentsMargins( 0,0,0,0 )
-
-    # UI
-    def Menu_Transparent( self, boolean ):
-        self.transparent = boolean
-        self.Transparent_Shift()
-        # Save
-        Krita.instance().writeSetting( "Imagine Board", "transparent", str( self.transparent ) )
-    def Insert_Size( self, boolean ):
-        self.insert_size_bool = boolean
-        # Save
-        Krita.instance().writeSetting( "Imagine Board", "insert_size", str( self.insert_size_bool ) )
-
-    # Preview
-    def Menu_SlideShow_Sequence( self, path ):
-        self.slideshow_sequence = path
-        Krita.instance().writeSetting( "Imagine Board", "slideshow_sequence", str( self.slideshow_sequence ) )
-    def Menu_SlideShow_Time( self, time ):
-        # Read
-        hour = self.dialog.menu_slideshow_time.time().hour()
-        minute = self.dialog.menu_slideshow_time.time().minute()
-        second = self.dialog.menu_slideshow_time.time().second()
-        # Calculations
-        hr_min = hour * 60
-        min_add = minute + hr_min
-        min_sec = min_add * 60
-        sec_add = second + min_sec
-        factor = 1000
-        self.slideshow_time = sec_add * factor # 1 x 1000ms = 1second
-        # Save
-        Krita.instance().writeSetting( "Imagine Board", "slideshow_time", str( self.slideshow_time ) )
-    # Grid
-    def Menu_Fit_Ratio( self, boolean ):
-        # Variable
+        # Footer
         if boolean == True:
-            self.tn_fit_ratio = True
+            self.layout.footer_widget.setMinimumHeight( 25 )
+            self.layout.footer_widget.setMaximumHeight( 25 )
         else:
-            self.tn_fit_ratio = False
-        # Update Display
-        self.imagine_grid.Set_Fit_Ratio( self.tn_fit_ratio )
-        # Save
-        Krita.instance().writeSetting( "Imagine Board", "fit_ratio", str( boolean ) )
-    def Menu_Smooth_Scale( self, boolean ):
-        # Variable
-        if boolean == True:
-            self.tn_smooth_scale = Qt.SmoothTransformation
-        else:
-            self.tn_smooth_scale = Qt.FastTransformation
-        # Update Display
-        self.imagine_grid.Set_Scale( self.tn_smooth_scale )
-        # Save
-        Krita.instance().writeSetting( "Imagine Board", "smooth_scale", str( boolean ) )
-    def Menu_Grid_U( self, value ):
-        self.grid_horz = int( value )
-        Krita.instance().writeSetting( "Imagine Board", "grid_u", str( self.grid_horz ) )
-        if self.widget_display == True:
-            self.Menu_Grid_Size()
-    def Menu_Grid_V( self, value ):
-        self.grid_vert = int( value )
-        Krita.instance().writeSetting( "Imagine Board", "grid_v", str( self.grid_vert ) )
-        if self.widget_display == True:
-            self.Menu_Grid_Size()
-    def Menu_Grid_UV( self, u, v ):
-        # Variables
-        self.grid_horz = int( u )
-        self.grid_vert = int( v )
-        # Widgets
-        self.dialog.menu_grid_horz.blockSignals( True )
-        self.dialog.menu_grid_vert.blockSignals( True )
-        self.dialog.menu_grid_horz.setValue( self.grid_horz )
-        self.dialog.menu_grid_vert.setValue( self.grid_vert )
-        self.dialog.menu_grid_horz.blockSignals( False )
-        self.dialog.menu_grid_vert.blockSignals( False )
-        # Modules
-        self.grid_table = ( self.grid_horz * self.grid_vert )
-        self.imagine_grid.Set_Grid( self.grid_horz, self.grid_vert )
-        # Save
-        Krita.instance().writeSetting( "Imagine Board", "grid_u", str( self.grid_horz ) )
-        Krita.instance().writeSetting( "Imagine Board", "grid_v", str( self.grid_vert ) )
-    def Menu_Grid_Size( self ):
-        self.grid_table = ( self.grid_horz * self.grid_vert )
-        self.imagine_grid.Set_Grid( self.grid_horz, self.grid_vert )
-        if self.widget_display == True:
-            self.Display_Update()
-    def Menu_Cache_Load( self, value ):
-        self.cache_load = int( value )
-        if self.cache_load >= self.cache_clean:
-            self.dialog.menu_cache_clean.setValue( self.cache_load )
-        Krita.instance().writeSetting( "Imagine Board", "cache_load", str( self.cache_load ) )
-    def Menu_Cache_Clean( self, value ):
-        self.cache_clean = int( value )
-        if self.cache_clean <= self.cache_load:
-            self.dialog.menu_cache_load.setValue( self.cache_clean )
-        Krita.instance().writeSetting( "Imagine Board", "cache_clean", str( self.cache_clean ) )
-    def Menu_Cache_Thread( self, value ):
-        self.cache_thread = int( value )
-        Krita.instance().writeSetting( "Imagine Board", "cache_thread", str( self.cache_thread ) )
-    # Reference
-    def Menu_Ref_Original( self, boolean ):
-        self.ref_original = boolean
-        # Save
-        Krita.instance().writeSetting( "Imagine Board", "ref_original", str( self.ref_original ) )
-    def Menu_Ref_Limit( self, value ):
-        self.ref_limit = int( value )
-        # Save
-        Krita.instance().writeSetting( "Imagine Board", "ref_limit", str( self.ref_limit ) )
-    def Menu_Ref_Undocache( self, value ):
-        self.undocache_size = int( value )
-        # Save
-        Krita.instance().writeSetting( "Imagine Board", "undocache_size", str( self.undocache_size ) )
+            self.layout.footer_widget.setMinimumHeight( 0 )
+            self.layout.footer_widget.setMaximumHeight( 0 )
 
-    # Sync
-    def Menu_List( self, list_active ):
-        # Checks
-        self.list_active = str( list_active )
-        # Watcher
-        if self.list_active == "Recent Documents":
-            recentdocuments = krita.Krita.instance().recentDocuments()
-            self.list_recentdocument = []
-            for i in range( 0, len( recentdocuments ) ):
-                if recentdocuments[i] != "":
-                    self.list_recentdocument.append( recentdocuments[i] )
+        # Update
+        self.Update_Size()
 
-        # Display
-        if self.widget_display == True:
-            self.Filter_Keywords( True )
-            self.Menu_Tabs()
-        # Finish
-        Krita.instance().writeSetting( "Imagine Board", "list_active", str( self.list_active ) )
-        # self.update()
-    def Menu_Type( self, text ):
-        # Directory
-        directory = text
-        if directory == "Normal":
-            self.file_extension = file_normal
-        if directory == "BackUp~":
-            self.file_extension = file_backup
-        # Display
-        if self.widget_display == True:
-            self.Filter_Keywords( True )
-            self.Menu_Tabs()
-        # Save
-        Krita.instance().writeSetting( "Imagine Board", "directory_file", str( directory ) )
-    def Menu_Sort( self, SIGNAL_SORT ):
-        # Sorting
-        if SIGNAL_SORT == "Local Aware":
-            self.filter_sort = QDir.LocaleAware
-        if SIGNAL_SORT == "Name":
-            self.filter_sort = QDir.Name
-        if SIGNAL_SORT == "Time":
-            self.filter_sort = QDir.Time
-        if SIGNAL_SORT == "Size":
-            self.filter_sort = QDir.Size
-        if SIGNAL_SORT == "Type":
-            self.filter_sort = QDir.Type
-        if SIGNAL_SORT == "Unsorted":
-            self.filter_sort = QDir.Unsorted
-        if SIGNAL_SORT == "No Sort":
-            self.filter_sort = QDir.NoSort
-        if SIGNAL_SORT == "Reversed":
-            self.filter_sort = QDir.Reversed
-        if SIGNAL_SORT == "Ignore Case":
-            self.filter_sort = QDir.IgnoreCase
-        # Display
-        if self.widget_display == True:
-            self.Filter_Keywords( True )
-            self.Menu_Tabs()
-        # Save
-        Krita.instance().writeSetting( "Imagine Board", "sort", str( SIGNAL_SORT ) )
-
-    # Tabs
-    def Menu_Tabs( self ):
-        self.Watcher_Update()
-        self.Information_Read()
+    # Progress Bar
+    def Progress_Value( self, value ):
+        self.layout.progress_bar.setValue( value )
+    def Progress_Max( self, value ):
+        self.layout.progress_bar.setMaximum( value )
 
     # Dialogs
     def Menu_Settings( self ):
         # Display
         self.dialog.show()
         # Resize Geometry
-        screen_zero = QtWidgets.QDesktopWidget().screenGeometry( 0 ) # Size of monitor zero 0
-        width = screen_zero.width()
-        height = screen_zero.height()
+        qmw = Krita.instance().activeWindow().qwindow()
+        px = qmw.x()
+        py = qmw.y()
+        w2 = qmw.width() * 0.5
+        h2 = qmw.height() * 0.5
         size = 500
-        self.dialog.setGeometry( int( width*0.5-size*0.5 ), int( height*0.5-size*0.5 ), int( size ), int( size ) )
+        self.dialog.setGeometry( int( px + w2 - size * 0.5 ), int( py + h2 - size * 0.5 ), int( size ), int( size ) )
+        # Updates
+        self.Combobox_Code()
     def Menu_Manual( self ):
         url = "https://github.com/EyeOdin/imagine_board/wiki"
         webbrowser.open_new( url )
@@ -1139,23 +903,21 @@ class ImagineBoard_Docker( DockWidget ):
     # Menu
     def Menu_Mode_Press( self, event ):
         # Menu
-        cmenu = QMenu( self )
+        qmenu = QMenu( self )
         # Actions
-        cmenu_preview = cmenu.addAction( "Preview" )
-        cmenu_grid = cmenu.addAction( "Grid" )
-        cmenu_reference = cmenu.addAction( "Reference" )
-        # cmenu_database = cmenu.addAction( "Reference" )
+        cmenu_preview = qmenu.addAction( "Preview" )
+        cmenu_grid = qmenu.addAction( "Grid" )
+        cmenu_reference = qmenu.addAction( "Reference" )
         # Icons
         cmenu_preview.setIcon( self.qicon_preview )
         cmenu_grid.setIcon( self.qicon_grid )
         cmenu_reference.setIcon( self.qicon_reference )
-        # cmenu_database.setIcon( self.qicon_reference )
 
         # Execute
         geo = self.layout.mode.geometry()
         qpoint = geo.bottomLeft()
-        position = self.layout.horizontal_buttons.mapToGlobal( qpoint )
-        action = cmenu.exec_( position )
+        position = self.layout.footer_widget.mapToGlobal( qpoint )
+        action = qmenu.exec_( position )
         # Triggers
         if action == cmenu_preview:
             self.Mode_Index( 0 )
@@ -1163,78 +925,70 @@ class ImagineBoard_Docker( DockWidget ):
             self.Mode_Index( 1 )
         if action == cmenu_reference:
             self.Mode_Index( 2 )
-        # if action == cmenu_database:
-        #     self.Mode_Index( 3 )
     def Menu_Mode_Wheel( self, event ):
+        increment = 0
+        value = 20
         delta = event.angleDelta()
         if event.modifiers() == QtCore.Qt.NoModifier:
             delta_y = delta.y()
-            value = 0
-            if delta_y > 20:
-                value = -1
-            if delta_y < -20:
-                value = 1
-            if ( value == -1 or value == 1 ):
-                new_index = Limit_Range( self.mode_index + value, 0, 2 )
-                # new_index = Limit_Range( self.mode_index + value, 0, 3 )
+            if delta_y > value:
+                increment = -1
+            if delta_y < -value:
+                increment = 1
+            if ( increment == -1 or increment == 1 ):
+                new_index = Limit_Range( self.mode_index + increment, 0, 2 )
                 if self.mode_index != new_index:
                     self.Mode_Index( new_index )
-    def Menu_Folder( self, event ):
-        # Menu
-        cmenu = QMenu( self )
-        cmenu.setMinimumWidth(  8 * len( self.directory_path ) )
 
-        # Actions
-        cmenu.addSection( self.directory_path )
-        # Parent Dir
-        parent = "... " + str( os.path.basename( os.path.dirname( self.directory_path ) ) )
-        cmenu_parent = cmenu.addAction( parent )
-        cmenu.addSection( " " )
-        # Child Dirs
-        actions = {}
-        for i in range( 0, len( self.os_folders ) ):
-            child = "\\ " + str( os.path.basename( self.os_folders[i] ) )
-            actions[i] = cmenu.addAction( child )
+    # Widgets
+    def Clear_Focus( self ):
+        self.layout.search.clearFocus()
+        self.layout.index_number.clearFocus()
+        self.layout.label_font.clearFocus()
+        self.layout.label_letter.clearFocus()
+    def Widget_Enable( self, boolean ):
+        self.layout.setEnabled( boolean )
+    def Update_Size( self ):
+        # Variables
+        ps = self.layout.preview_view.size()
+        gs = self.layout.imagine_grid.size()
+        rs = self.layout.reference_view.size()
+        self.state_maximized = self.isMaximized()
 
-        # Execute
-        geo = self.layout.folder.geometry()
-        qpoint = geo.bottomLeft()
-        position = self.layout.icon_buttons.mapToGlobal( qpoint )
-        action = cmenu.exec_( position )
+        # Modules
+        self.imagine_preview.Set_Size( ps.width(), ps.height(), self.state_maximized )
+        self.imagine_grid.Set_Size( gs.width(), gs.height(), self.state_maximized )
+        self.imagine_reference.Set_Size( rs.width(), rs.height(), self.state_maximized )
 
-        # Triggers
-        path = None
-        if action == cmenu_parent:
-            path = os.path.dirname( self.directory_path )
-        for i in range( 0, len( self.os_folders ) ):
-            if action == actions[i]:
-                path = str( self.os_folders[i] )
-                break
-        # Emit
-        if path != None:
-            self.Folder_Changer( [ path, True ] )
-    def OS_Folders( self, directory ):
-        dirfiles = os.listdir( directory )
-        fullpaths = map( lambda name: os.path.join( directory, name ), dirfiles )
-        self.os_folders = []
-        for f in fullpaths:
-            if os.path.isdir( f ):
-                self.os_folders.append( f )
-        if len( self.os_folders ) > 0:
-            self.os_folders.sort()
+        # Color Picker Swatches
+        self.block_pen.Set_Size( self.layout.label_pen.width(), self.layout.label_pen.height() )
+        self.block_bg.Set_Size( self.layout.label_bg.width(), self.layout.label_bg.height() )
+        # Color Picker Location
+        if self.picker.isVisible() == True:
+            self.Picker_Geometry()
+    def Update_Size_Display( self ):
+        width = self.width()
+        height = self.height()
+        self.Message_Log( "SIZE", f"{ width } x { height }" )
 
     #endregion
     #region Management #############################################################
-    def grid_to_prev( self, gp, gh, sx, sy ):
-        prev = ( gp * gh ) + ( sy * gh ) + sx
-        return prev
-    def Clean_Dot( self, text ):
-        if text.startswith( "." ) == True:
-            text = ""
-        return text
-    def Path_Extension( self, path ):
-        extension = os.path.splitext( path )[1][1:]
-        return extension
+
+    # Import Modules
+    def Import_Pigment_O( self ):
+        try:
+            dockers = Krita.instance().dockers()
+            for d in dockers:
+                if d.objectName() == self.pigment_o_pyid:
+                    self.pigment_o_module = d
+                    break
+        except:
+            self.pigment_o_module = None
+        self.imagine_preview.Set_Pigment_O( self.pigment_o_module )
+        self.imagine_grid.Set_Pigment_O( self.pigment_o_module )
+        self.imagine_reference.Set_Pigment_O( self.pigment_o_module )
+
+    # String
     def Path_Components( self, path ):
         directory = os.path.dirname( path ) # dir
         basename = os.path.basename( path ) # name.ext
@@ -1242,258 +996,520 @@ class ImagineBoard_Docker( DockWidget ):
         n = basename.find( extension )
         base = basename[:n] # name
         return directory, basename, extension, base
-
-    def Clear_Focus( self ):
-        self.layout.search.clearFocus()
-        self.layout.index_number.clearFocus()
-        self.layout.comp_number.clearFocus()
-    def Widget_Enable( self, boolean ):
-        # Panels
-        self.layout.preview_view.setEnabled( boolean )
-        self.layout.imagine_grid.setEnabled( boolean )
-        self.layout.imagine_reference.setEnabled( boolean )
-        # Animations
-        self.layout.anim_frame_back.setEnabled( boolean )
-        self.layout.anim_playpause.setEnabled( boolean )
-        self.layout.anim_frame_forward.setEnabled( boolean )
-        # Widgets
-        self.layout.index_slider.setEnabled( boolean )
-        self.layout.mode.setEnabled( boolean )
-        self.layout.folder.setEnabled( boolean )
-        self.layout.slideshow.setEnabled( boolean )
-        self.layout.thread.setEnabled( boolean )
-        self.layout.undo.setEnabled( boolean )
-        self.layout.redo.setEnabled( boolean )
-        self.layout.search.setEnabled( boolean )
-        self.layout.index_number.setEnabled( boolean )
-        self.layout.settings.setEnabled( boolean )
-
-    def Update_Size( self ):
-        # Variables
-        width = self.layout.stacked_widget.width()
-        height = self.layout.stacked_widget.height()
-
-        # Preview and Grid
-        self.imagine_preview.Set_Size( width, height )
-        self.imagine_grid.Set_Size( width, height )
-
-        # Reference
-        # check = self.mode_index == 0 or self.mode_index == 1 or self.dirty > 0 or self.widget_float == True
-        # if check == True:
-            # self.imagine_reference.Set_Size_Corner( width, height )
-            # self.imagine_database.Set_Size_Corner( width, height )
-        # elif ( self.mode_index == 2 or self.mode_index == 3 ):
-            # self.imagine_reference.Set_Size_Middle( width, height )
-            # self.imagine_database.Set_Size_Middle( width, height )
-
-        self.imagine_reference.Set_Size_Middle( width, height )
-        # self.imagine_database.Set_Size_Middle( width, height )
-    def Update_Size_Display( self ):
-        width = self.width()
-        height = self.height()
-        QtCore.qDebug( "size = " + str( width ) + " x " + str( height ) )
-
-    def Import_Pigment_O( self ):
-        self.MODULE_pigmento_bool = False
-        try:
-            dockers = Krita.instance().dockers()
-            for i in range( 0, len( dockers ) ):
-                if dockers[i].objectName() == self.MODULE_pigmento_pyid:
-                    # Docker located
-                    self.pigment_o = dockers[i]
-                    self.MODULE_pigmento_bool = True
-
-                    # Modules
-                    self.imagine_preview.Set_Pigmento( self.pigment_o )
-                    self.imagine_grid.Set_Pigmento( self.pigment_o )
-                    self.imagine_reference.Set_Pigmento( self.pigment_o )
-                    break
-            else:
-                self.imagine_preview.Set_Pigmento( None )
-                self.imagine_grid.Set_Pigmento( None )
-                self.imagine_reference.Set_Pigmento( None )
-                QtCore.qDebug( "IB error | Pigment.O module not imported" )
-        except:
-            pass
-
-    def Progress_Value( self, value ):
-        self.layout.progress_bar.setValue( value )
-    def Progress_Max( self, value ):
-        self.layout.progress_bar.setMaximum( value )
-
-    def Screen_Swap( self ):
-        state = self.layout.screen.isChecked()
-        self.layout.screen.setChecked( not state )
-    def Full_Screen( self, boolean ):
-        # Variable
-        self.full_screen = boolean
-        # UI
-        if boolean == True:
-            # Float Full Screen
-            self.widget_float = True
-            self.setFloating( self.widget_float )
-            # Monitor Zero Geometry
-            screen_zero = QtWidgets.QDesktopWidget().screenGeometry( 0 ) # Size of monitor zero 0
-            width = screen_zero.width()
-            height = screen_zero.height()
-            self.setGeometry( 0, 0, width, height )
-            # Button
-            self.layout.screen.setMaximumWidth( 20 )
-            self.layout.screen.setIcon( Krita.instance().icon( 'arrow-down' ) )
+    def File_Extension( self, path ):
+        if path == None:
+            extension = None
         else:
-            # Dock
-            self.widget_float = False
-            self.setFloating( self.widget_float )
-            # Button
-            self.layout.screen.setMaximumWidth( 0 )
-            self.layout.screen.setIcon( Krita.instance().icon( 'zoom-vertical' ) )
+            extension = pathlib.Path( path ).suffix
+            extension = extension.replace( ".", "" )
+        return extension
 
-    def Dict_Copy( self, active, load ):
-        keys = list( active.keys() )
-        for i in range( 0, len( active ) ):
-            try:
-                active[keys[i]] = load[keys[i]]
-            except:
-                pass
+    # Communication
+    def Message_Log( self, operation, message ):
+        string = f"Imagine Board | { operation } { message }"
+        try:QtCore.qDebug( string )
+        except:pass
+    def Message_Warnning( self, operation, message ):
+        string = f"Imagine Board | { operation } { message }"
+        QMessageBox.information( QWidget(), i18n( "Warnning" ), i18n( string ) )
+    def Message_Float( self, operation, message, icon ):
+        ki = Krita.instance()
+        string = f"Imagine Board | { operation } { message }"
+        ki.activeWindow().activeView().showFloatingMessage( string, ki.icon( icon ), 5000, 0 )
+
+    # Lists
+    def Recent_Documents( self, list_old ):
+        # Krita Read
+        recent_doc = krita.Krita.instance().recentDocuments()
+        recent_doc.sort()
+        # List
+        list_new = []
+        for rd in recent_doc:
+            if rd != "":
+                list_new.append( rd )
+        if len( list_new ) != len( list_old ):
+            self.list_krita = list_new
+            self.Filter_Search()
+
+    # Internet
+    def Download_QPixmap( self, url ):
+        data = self.Download_Data( url )
+        try:
+            qpixmap = QPixmap()
+            qpixmap.loadFromData( data )
+        except:
+            qpixmap = None
+        return qpixmap
+    def Download_Data( self , url ):
+        try:
+            request = urllib.request.Request( url, headers={ "User-Agent": "Mozilla/5.0" } )
+            response = urllib.request.urlopen( request )
+            data = response.read()
+        except:
+            data = None
+        return data
+    def Check_Html( self, url ):
+        boolean = False
+        result = urllib.parse.urlparse( url )
+        scheme = result.scheme
+        if scheme == "https":
+            boolean = True
+        return boolean
+
+    # Bytes
+    def Bytes_QPixmap( self, qpixmap ):
+        extension = "PNG" # "PNG" "JPG"
+        ba = QtCore.QByteArray()
+        buffer = QtCore.QBuffer( ba )
+        buffer.open( QtCore.QIODevice.WriteOnly )
+        ok = qpixmap.save( buffer, extension )
+        assert ok
+        pixmap_bytes = ba.data()
+        return pixmap_bytes
+    def Bytes_Python( self, path ):
+        with open( path, "rb" ) as f:
+            data = f.read()
+        return data
 
     #endregion
-    #region File Options ###########################################################
+    #region Signals ################################################################
+
+    # File
+    def File_Location( self, image_path ):
+        kernel = str( QSysInfo.kernelType() ) # WINDOWS=winnt & LINUX=linux
+        if kernel == "winnt": # Windows
+            FILEBROWSER_PATH = os.path.join( os.getenv( 'WINDIR' ), 'explorer.exe' )
+            subprocess.run( [ FILEBROWSER_PATH, '/select,', image_path ] )
+        elif kernel == "linux": # Linux
+            QDesktopServices.openUrl( QUrl.fromLocalFile( os.path.dirname( image_path ) ) )
+        elif kernel == "darwin": # MAC
+            QDesktopServices.openUrl( QUrl.fromLocalFile( os.path.dirname( image_path ) ) )
+        else:
+            QDesktopServices.openUrl( QUrl.fromLocalFile( os.path.dirname( image_path ) ) )
+        self.Message_Log( "FILE LOCATION", f"{ image_path }" )
+
+    # Mouse Stylus
+    def Drop_Inside( self, lista ):
+        if len( lista ) > 0:
+            # Variables
+            item = lista[0]
+            # Check Source
+            check_html = self.Check_Html( item )
+            if check_html == True:
+                if self.function_panel_drop == False:
+                    self.Preview_Internet( item )
+                if self.function_panel_drop == True:
+                    self.Function_Process( lista )
+            else:
+                # Checks
+                item = os.path.abspath( item )
+                check_dir = os.path.isdir( item )
+                check_file = os.path.isfile( item )
+                # Logic
+                if check_dir == True:
+                    directory = item
+                    basename = None
+                if check_file == True:
+                    directory = os.path.dirname( item )
+                    basename = os.path.basename( item )
+                # Open
+                if self.function_panel_drop == False: # Preview and Grid Only
+                    if self.folder_path != directory:
+                        self.Folder_Load( directory, 0 )
+                    self.Preview_String( basename )
+                if self.function_panel_drop == True:
+                    self.Function_Process( lista )
+    def Drag_Drop( self, image_path, clip ):
+        # New Documents only consider the path so it excludes clip
+        qimage = self.Image_Clip( image_path, clip )
+        check_vector = image_path.endswith( tuple( file_vector ) )
+        if check_vector == True:
+            # Read SVG
+            svg_shape = ""
+            file_item = open( image_path, "r", encoding="UTF-8" )
+            for line in file_item:
+                svg_shape += line
+            # Drag and Drop
+            if svg_shape != "":
+                # Clipboard
+                clipboard = QApplication.clipboard().setText( svg_shape )
+                # MimeData
+                mimedata = QMimeData()
+                url = QUrl().fromLocalFile( image_path )
+                mimedata.setUrls( [ url ] )
+                mimedata.setText( svg_shape )
+                mimedata.setImageData( qimage )
+                # Thumbnail
+                self.Drag_Thumbnail( qimage, mimedata )
+        else:
+            if qimage.isNull() == False:
+                # Clipboard
+                clipboard = QApplication.clipboard().setImage( qimage )
+                # MimeData
+                mimedata = QMimeData()
+                url = QUrl().fromLocalFile( image_path )
+                mimedata.setUrls( [ url ] )
+                mimedata.setText( image_path )
+                mimedata.setImageData( qimage )
+                # Thumbnail
+                self.Drag_Thumbnail( qimage, mimedata )
+    def Drag_Thumbnail( self, qimage, mimedata ):
+        # Display
+        size = 200
+        thumb = QPixmap().fromImage( qimage )
+        if thumb.isNull() == False:
+            thumb = thumb.scaled( size, size, Qt.KeepAspectRatio, Qt.FastTransformation )
+        # Drag
+        drag = QDrag( self )
+        drag.setMimeData( mimedata )
+        drag.setPixmap( thumb )
+        drag.setHotSpot( QPoint( int( thumb.width() * 0.5 ), int( thumb.height() * 0.5 ) ) )
+        drag.exec( Qt.CopyAction )
+
+    # Insert
+    def Insert_Document( self, image_path, clip ):
+        if image_path not in ( "", None ):
+            # Create Document
+            document = Krita.instance().openDocument( image_path )
+            Application.activeWindow().addView( document )
+            w = document.width()
+            h = document.height()
+            # Crop
+            if clip["state"] == True:
+                ad = Krita.instance().activeDocument()
+                ad.crop( int( w * clip["cl"] ), int( h * clip["ct"] ), int( w * clip["cw"] ), int( h * clip["ch"] ) )
+                ad.waitForDone()
+                ad.refreshProjection()
+                Krita.instance().action('reset_display').trigger()
+            # Show Message
+            self.Message_Float( "INSERT", "New Document", "document-new" )
+        else:
+            self.Message_Float( "REPORT", "Null Image", "broken-preset" )
+    def Insert_Layer( self, image_path, clip ):
+        if image_path not in ( "", None ) and ( self.canvas() is not None ) and ( self.canvas().view() is not None ):
+            check_vector = image_path.endswith( tuple( file_vector ) )
+            if check_vector == True:
+                self.Insert_Vector( image_path )
+            else:
+                self.Insert_Pixel( image_path, clip )
+        else:
+            self.Message_Float( "REPORT", "Null Image", "broken-preset" )
+    def Insert_Reference( self, image_path, clip ):
+        if image_path not in ( "", None ) and ( self.canvas() is not None ) and ( self.canvas().view() is not None ):
+            # Image
+            qimage = self.Image_Clip( image_path, clip )
+            if qimage.isNull() == False:
+                # MimeData
+                mimedata = QMimeData()
+                url = QUrl().fromLocalFile( image_path )
+                mimedata.setUrls( [ url ] )
+                mimedata.setImageData( qimage )
+                mimedata.setData( image_path, image_path.encode() )
+                # Clipboard
+                clipboard = QApplication.clipboard().setMimeData( mimedata )
+                # Place Image
+                Krita.instance().action( 'paste_as_reference' ).trigger()
+                Krita.instance().activeDocument().refreshProjection()
+                # Message
+                self.Message_Float( "INSERT", "Reference", "krita_tool_reference_images" )
+            else:
+                self.Message_Float( "REPORT", "Null Image", "broken-preset" )
+        else:
+            self.Message_Float( "REPORT", "Null Image", "broken-preset" )
+    def Insert_Vector( self, image_path ):
+        report = "Vector"
+        try:
+            # Variables
+            basename = os.path.basename( image_path )
+            # Read SVG
+            svg_shape = ""
+            file_item = open( image_path, "r", encoding="UTF-8" )
+            for line in file_item:
+                svg_shape += line
+            # Create Layer
+            ad = Krita.instance().activeDocument()
+            rn = ad.rootNode()
+            vl = ad.createVectorLayer( basename )
+            rn.addChildNode( vl, None )
+            # Input Shape to Layer
+            vl.addShapesFromSvg( svg_shape )
+        except Exception as e:
+            report = e
+        self.Message_Float( "INSERT", report, "vectorLayer" )
+    def Insert_Pixel( self, image_path, clip ):
+        report = "Pixel"
+        try:
+            # Variables
+            basename = os.path.basename( image_path )
+            # Create Layer
+            ad = Krita.instance().activeDocument()
+            rn = ad.rootNode()
+            pl = ad.createNode( basename, "paintLayer" )
+            rn.addChildNode( pl, None )
+            # Qimage Data
+            qimage = self.Image_Clip( image_path, clip )
+            ptr = qimage.constBits()
+            ptr.setsize( qimage.byteCount() )
+            pl.setPixelData( bytes( ptr.asarray() ), 0, 0, qimage.width(), qimage.height() )
+            ad.refreshProjection()
+        except Exception as e:
+            report = e
+        self.Message_Float( "INSERT", report, "paintLayer" )
+    def Image_Clip( self, image_path, clip ):
+        qimage = QImage( image_path )
+        if qimage.isNull() == False:
+            if clip["state"] == True:
+                w = qimage.width()
+                h = qimage.height()
+                qimage = qimage.copy( int( w * clip["cl"] ), int( h * clip["ct"] ), int( w * clip["cw"] ), int( h * clip["ch"] ) )
+            if ( self.insert_size == False ) and ( self.canvas() is not None ) and ( self.canvas().view() is not None ):
+                ad = Krita.instance().activeDocument()
+                iw = ad.width()
+                ih = ad.height()
+            else:
+                size = max( qimage.size().width(), qimage.size().height() )
+                iw = size
+                ih = size
+            qimage = qimage.scaled( iw * self.insert_scale, ih * self.insert_scale, Qt.KeepAspectRatio, Qt.SmoothTransformation )
+        return qimage
+
+    # Color
+    def Color_Analyse( self, qimage ):
+        if ( self.pigment_o_module != None and qimage.isNull() == False ):
+            report = self.pigment_o_module.API_Image_Analyse( qimage )
+            self.Message_Log( "ANALYSE", f"{ report }" )
+        else:
+            self.Message_Log( "ERROR", "Pigment.O not present" )
+
+    # Extension
+    def Shortcut_Browse( self, browse ):
+        if self.mode_index == 0:
+            self.Preview_Increment( browse )
+        if self.mode_index == 1:
+            self.Grid_Increment( browse )
+        if self.mode_index == 2:
+            self.Reference_Increment( browse )
+
+    #endregion
+    #region API ####################################################################
+
+    def API_Preview_QPixmap( self, qpixmap ):
+        # UI Extra Panels
+        self.ExtraPanel_Shrink()
+        self.LabelPanel_Shrink()
+        # Set Image to Render ( ignores "animation" and "compressed" )
+        self.imagine_preview.Display_QPixmap( qpixmap )
+
+    def Imagine_Sample_Script( self ):
+        """
+        import krita
+
+        pyid = "pykrita_imagine_board_docker"
+        dockers = Krita.instance().dockers()
+        for i in range( 0, len( dockers ) ):
+            if dockers[i].objectName() == pyid:
+                imagine_board = dockers[i]
+                break
+        imagine_board.API_Preview_QPixmap( qpixmap )
+        """
+
+    #endregion
+    #region Files ##################################################################
+
+    def Folder_Menu( self, event ):
+        if self.folder_path == None:
+            self.Folder_Open()
+        else:
+            # Menu
+            qmenu = QMenu( self )
+            qmenu.setMinimumWidth( 8 * len( self.folder_path ) )
+
+            # Title
+            qmenu.addSection( self.folder_path )
+            # Parent Dir
+            parent = f"🖿 { os.path.basename( os.path.dirname( self.folder_path ) ) }"
+            cmenu_parent = qmenu.addAction( parent )
+            qmenu.addSection( " " )
+            # Child Dirs
+            actions = {}
+            for i in range( 0, len( self.folder_shift ) ):
+                child = f"⮩ { os.path.basename( self.folder_shift[i] ) }"
+                actions[i] = qmenu.addAction( child )
+
+            # Execute
+            geo = self.layout.folder.geometry()
+            qpoint = geo.bottomLeft()
+            position = self.layout.icon_buttons.mapToGlobal( qpoint )
+            action = qmenu.exec_( position )
+
+            # Triggers
+            path = None
+            if action == cmenu_parent:
+                path = os.path.dirname( self.folder_path )
+            for i in range( 0, len( self.folder_shift ) ):
+                if action == actions[i]:
+                    path = str( self.folder_shift[i] )
+                    break
+            # Emit
+            if path != None:
+                self.Folder_Load( path, 0 )
+    def Folder_Shift( self, directory ):
+        self.folder_shift = []
+        dir_list = os.listdir( directory )
+        path_list = map( lambda name: os.path.join( directory, name ), dir_list )
+        for path in path_list:
+            if os.path.isdir( path ):
+                self.folder_shift.append( path )
+        if len( self.folder_shift ) > 0:
+            self.folder_shift.sort()
+
     def Folder_Open( self ):
         file_dialog = QFileDialog( QWidget( self ) )
         file_dialog.setFileMode( QFileDialog.DirectoryOnly )
-        directory_path = file_dialog.getExistingDirectory( self, "Select Directory" )
-        directory_path = os.path.normpath( directory_path )
-        self.Folder_Load( directory_path )
-    def Folder_Load( self, directory_path ):
-        if ( directory_path != "" and directory_path != "." and self.directory_path != directory_path ):
-            # Images
-            self.Folder_Changer( [directory_path, True] )
-            # Warnning
-            if self.list_active != "Folder":
-                string = "Item list is not Folder\n\nChanges are invisible\n"
-                QMessageBox.information( QWidget(), i18n( "Warnning" ), i18n( string ) )
-    def Folder_Changer( self, SIGNAL_PATH ):
-        # Variables
-        directory_path = SIGNAL_PATH[0]
-        reset = SIGNAL_PATH[1]
-        self.directory_path = os.path.normpath( directory_path )
-
-        # Widgets
-        self.layout.folder.setToolTip( "Dir : " + os.path.basename( self.directory_path ) )
-        # Modules
-        self.imagine_preview.Set_Directory( self.directory_path )
-        self.imagine_preview.Clip_Off()
-        self.OS_Folders( self.directory_path )
-        # Docker
-        self.Watcher_Update()
-        self.Filter_Keywords( reset )
+        folder_path = file_dialog.getExistingDirectory( self, "Select Directory", self.folder_path )
+        if folder_path not in [ "", ".", None ]:
+            self.Folder_Load( folder_path, 0 )
+    def Folder_Load( self, folder_path, index ):
+        try:
+            exists = os.path.exists( folder_path )
+            if exists == True:
+                # Variables
+                self.folder_path = folder_path
+                self.slideshow_lottery.clear()
+                # UI
+                string = f"Folder : { os.path.basename( self.folder_path ) }"
+                self.layout.folder.setToolTip( string )
+                # Operation
+                self.Filter_Keywords( self.search, index )
+                self.Folder_Shift( folder_path )
+                self.Watcher_Update()
+        except:
+            self.folder_path = ""
         # Save
-        Krita.instance().writeSetting( "Imagine Board", "directory_path", str( self.directory_path ) )
-    def Folder_Drop( self, path ):
-        # Check Folder / File
-        if os.path.isfile( path ) == True:
-            directory = os.path.dirname( path )
-            basename = os.path.basename( path )
-        if os.path.isdir( path ) == True:
-            directory = path
-            basename = None
+        Krita.instance().writeSetting( "Imagine Board", "folder_path", str( self.folder_path ) )
 
-        # Folder > File
-        self.Folder_Load( directory )
-        if basename != None:
-            self.Preview_Find( basename )
-
-    def Filter_Keywords( self, reset ):
-        if self.widget_display == True:
+    def Filter_Search( self ):
+        self.search = self.layout.search.text().lower()
+        self.Filter_Keywords( self.search, 0 )
+        Krita.instance().writeSetting( "Imagine Board", "search", str( self.search ) )
+    def Filter_Keywords( self, search, index ):
+        try:
             # Time Watcher
             start = QtCore.QDateTime.currentDateTimeUtc()
 
-            # Reset to Page Zero
-            if reset == True:
-                self.comp_index = 0
-                self.preview_index = 0
-                self.line_preview = 0
-                self.line_grid = 0
-                self.Index_Values( 0 )
+            # Lists
+            active_list = self.sync_list.upper()
+            if self.sync_list == "Folder":
+                # Variables
+                active_location = os.path.basename( self.folder_path )
+                # Files
+                self.qdir.setPath( self.folder_path )
+                self.qdir.setSorting( self.file_sort )
+                self.qdir.setFilter( QDir.Files | QDir.NoSymLinks | QDir.NoDotAndDotDot )
+                self.qdir.setNameFilters( self.file_extension )
+                files = self.qdir.entryInfoList()
+                count = len( files )
+            elif self.sync_list == "Krita":
+                # Variables
+                active_location = None
+                # Files
+                files = []
+                for doc in self.list_krita:
+                    files.append( doc )
+                files = self.Filter_Sort( files, self.sync_sort )
+                count = len( files )
+            elif self.sync_list == "Reference":
+                # Variables
+                active_location = None
+                # Files
+                files = []
+                for pin in self.list_reference:
+                    path = pin["path"]
+                    web = pin["web"]
+                    if path != None:
+                        files.append( pin["path"] )
+                    elif web != None:
+                        files.append( pin["web"] )
+                files = self.Filter_Sort( files, self.sync_sort )
+                count = len( files )
+            else:
+                active_list = None
+                active_location = None
+                files = []
+                count = 0
 
-            search = ""
-            if self.directory_path != "":
-                if self.list_active == "Recent Documents":
-                    files = []
-                    for i in range( 0, len( self.list_recentdocument ) ):
-                        files.append( self.list_recentdocument[i] )
-                    files.reverse()
-                    count = len( files )
-                elif self.list_active == "Reference Images":
-                    files = []
-                    for i in range( 0, len( self.list_pin_ref ) ):
-                        files.append( self.list_pin_ref[i]["path"] )
-                    files.sort()
-                    count = len( files )
-                else: # Folder
-                    self.dir.setPath( self.directory_path )
-                    self.dir.setSorting( self.filter_sort )
-                    self.dir.setFilter( QDir.Files | QDir.NoSymLinks | QDir.NoDotAndDotDot )
-                    self.dir.setNameFilters( self.file_extension )
-                    files = self.dir.entryInfoList()
-                    count = len( files )
+            # Progress Bar
+            self.Progress_Value( 0 )
+            self.Progress_Max( count )
 
+            # Keywords
+            keywords = []
+            remove = []
+            elements = r'[0-9A-Za-z\\/|!"#$%&()=?@£§{[\]\}\'«»,;.:-_çºª¨´~^*-+]+'
+            words = re.findall( elements, search )
+            try:
+                n = words.index( "not" )
+                keywords = words[:n]
+                remove = words[n+1:]
+            except:
+                keywords = words
+            len_key = len( keywords )
+            len_rem = len( remove )
+
+            # Search Cycle
+            path_new = []
+            for i in range( 0, count ):
                 # Progress Bar
-                self.Progress_Value( 0 )
-                self.Progress_Max( count )
+                self.Progress_Value( i + 1 )
 
-                # Input parsing
-                search = self.layout.search.text()
-                Krita.instance().writeSetting( "Imagine Board", "search", str( search ) )
-                keywords = search.split()
-                remove = []
-                if len( keywords ) == 0:
-                    keywords = [""]
-                try:
-                    n = keywords.index( "not" )
-                    remove = keywords[n+1:]
-                    keywords = keywords[:n]
-                except:
-                    remove = []
-
-                # Search Cycle
-                paths_new = []
-                for k in range( 0, len( keywords ) ):
-                    for i in range( 0, count ):
-                        item = files[i]
-                        self.Progress_Value( i+1 )
-                        if ( item != None and item != "" ):
-                            if ( self.list_active == "Recent Documents" or self.list_active == "Reference Images" ):
-                                fn = os.path.basename( item )
-                                fp = item
-                            else:
-                                fn = item.fileName()
-                                fp = item.filePath()
-                            if keywords[k] in fn and not fp in paths_new:
-                                paths_new.append( fp )
-                                # Remove Cycle
-                                len_remove = len( remove )
-                                if len_remove > 0:
-                                    for r in range( 0, len_remove ):
-                                        if remove[r] in fn:
-                                            try:
-                                                paths_new.remove( fp )
-                                            except:
-                                                pass
-
-                # Construct base variables
-                self.found_path = copy.deepcopy( paths_new )
-                self.preview_max = len( self.found_path )
-                self.grid_max = math.trunc( self.preview_max / self.grid_horz )
-                if len( paths_new ) > 0:
-                    self.images_found = True
-                    self.Index_Range( 1, self.preview_max )
+                # Variables
+                item = files[i]
+                if self.sync_list in ( "Krita", "Reference" ):
+                    fn = os.path.basename( item ).lower()
+                    fp = os.path.abspath( item )
                 else:
-                    self.images_found = False
-                    self.Index_Range( 0, 0 )
+                    fn = item.fileName().lower()
+                    fp = os.path.abspath( item.filePath() )
+                # Logic
+                if ( len_key == 0 and len_rem == 0 ):
+                    path_new.append( fp )
+                else:
+                    # Variables
+                    check_add = False
+                    check_rem = False
+                    # Add
+                    for key in keywords:
+                        if key in fn:
+                            check_add = True
+                            break
+                    # Remove
+                    for rem in remove:
+                        if rem in fn:
+                            check_rem = True
+                            break
+                    # Operation
+                    if ( check_add == True and check_rem == False ):
+                        path_new.append( fp )
+
+            # Variables
+            self.file_path.clear()
+            self.file_path = copy.deepcopy( path_new )
+            self.preview_max = len( path_new )
+            if len( path_new ) > 0:
+                self.file_found = True
+                self.Index_Range( 1, self.preview_max )
+            else:
+                self.file_found = False
+                self.Index_Range( 0, 0 )
+
+            # Reset Display
+            index_type = type( index )
+            if index_type is int:
+                self.Preview_Index( index )
+            elif index_type is str:
+                self.Preview_String( index )
 
             # Update List and Display
-            self.Display_Clean()
             self.Display_Update()
 
             # Progress Bar
@@ -1504,445 +1520,97 @@ class ImagineBoard_Docker( DockWidget ):
             end = QtCore.QDateTime.currentDateTimeUtc()
             delta = start.msecsTo( end )
             time = QTime( 0,0 ).addMSecs( delta )
-            try:QtCore.qDebug( "IB " + str( time.toString( 'hh:mm:ss.zzz' ) ) + " | Directory: " + os.path.basename( self.directory_path ) + " | Search: " + search )
-            except:pass
-        else:
+            self.Message_Log( "FILTER", f"{ time.toString( 'hh:mm:ss.zzz' ) } | { active_list } { active_location } | SEARCH { search }" )
+        except Exception as e:
             self.Filter_Null()
     def Filter_Null( self ):
-        self.imagine_preview.Set_Default()
         self.Index_Range( 0, 0 )
         self.Index_Values( 0 )
+    def Filter_Sort( self, files, sort ):
+        # Variables
+        boolean = False
+        order = []
+        # Descrimination
+        for i in range( 0, len( files ) ):
+            path = files[i]
+            if sort == "Name":
+                name = os.path.basename( path )
+                item = [ name, path ]
+            elif sort == "Time":
+                boolean = True
+                time = os.path.getmtime( path )
+                item = [ time, path ]
+            elif sort == "Size":
+                boolean = True
+                size = os.path.getsize( path )
+                item = [ size, path ]
+            elif sort == "Type":
+                tipo = os.path.splitext( path )[1]
+                item = [ tipo, path ]
+            else:
+                item = [ i, path ]
+            order.append( item )
+        order.sort( reverse=boolean )
+        # Clean List
+        for i in range( 0, len( order ) ):
+            files[i] = order[i][1]
+        # Return
+        return files
 
-    def Display_Clean( self ):
-        if self.images_found == True:
-            self.found_qpixmap = [self.null_qpixmap] * self.preview_max
-        else:
-            self.found_qpixmap = [self.null_qpixmap] * self.grid_table
+    #endregion
+    #region Display ################################################################
+
     def Display_Update( self ):
-        # Images to Display
         self.Display_Sync()
-        self.Display_Cache()
         self.Display_Preview()
         self.Display_Grid()
         self.Display_Reference()
 
     def Display_Sync( self ):
-        if self.mode_index == 0:
-            self.line_preview = math.trunc( ( self.preview_index ) / self.grid_horz )
-            if self.line_preview <= self.line_grid:
-                self.line_grid = self.line_preview
-            if self.line_preview >= ( self.line_grid + self.grid_vert ):
-                self.line_grid = self.line_preview - self.grid_vert + 1
-        if self.mode_index == 1:
-            line = math.trunc( ( self.preview_index ) / self.grid_horz )
-            if line <= self.line_grid:
-                self.line_grid = line
-            if line >= ( self.line_grid + self.grid_vert ):
-                self.line_grid = line - self.grid_vert + 1
-        # Save
         Krita.instance().writeSetting( "Imagine Board", "preview_index", str( self.preview_index ) )
-    def Display_Cache( self ):
-        # Only Affects Display Grid
-        if self.images_found == True:
-            # Display list in a build up fashion as you scroll through images
-            grid_tl = self.line_grid * self.grid_horz
-            grid_br = grid_tl + self.grid_table
-            load_left = self.cache_load
-            load_right = self.cache_load
-            clean_left = self.cache_clean
-            clean_right = self.cache_clean
-            ll = Limit_Range( grid_tl - load_left, 0, self.preview_max )
-            lr = Limit_Range( grid_br + load_right, 0, self.preview_max )
-            cl = Limit_Range( grid_tl - clean_left, 0, self.preview_max )
-            cr = Limit_Range( grid_br + clean_right, 0, self.preview_max )
-            # Send Pixmaps to Modules
-            try:
-                for i in range( 0, self.preview_max ):
-                    path = self.found_path[i]
-                    # Populate Nearby
-                    if ( i >= ll and i <= lr ):
-                        if self.found_qpixmap[i].isNull() == True: # From List, Only load if the image is a null
-                            qpixmap = QPixmap( path )
-                            self.found_qpixmap[i] = qpixmap
-                    # Clean Far Away
-                    elif ( i <= cl or i >= cr ): # From List, Clean if image is too far away
-                        self.found_qpixmap[i] = self.null_qpixmap
-            except:
-                pass
-        else:
-            self.found_qpixmap = [self.null_qpixmap] * self.grid_table
     def Display_Preview( self ):
         if self.mode_index == 0:
-            # UI Extra Panels
-            self.Menu_CompPanel( False )
-            self.Menu_AnimPanel( False )
+            # UI Extra Panel
+            self.Preview_ExtraPanel( False )
+            self.layout.extra_slider.setEnabled( False )
+            self.Extra_PlayPause_Enable( False )
 
-            # Set Image to Render
-            if self.images_found == True:
-
-                self.preview_path = self.found_path[self.preview_index]
-                extension = self.Path_Extension( self.preview_path )
-                if extension in file_anim:
-                    if QPixmap( self.preview_path ).isNull() == False:
-                        self.imagine_preview.Set_Anim_Preview( self.preview_path, self.anim_playpause )
-                    else:
-                        self.imagine_preview.Set_Default()
-                elif extension in file_compress:
-                    self.Namelist_Start( self.preview_path )
-                else: # Normal Images
-                    if QPixmap( self.preview_path ).isNull() == False:
-                        self.imagine_preview.Set_QPixmap_Preview( self.preview_path )
-                    else:
-                        self.imagine_preview.Set_Default()
+            # Display
+            if self.file_found == True:
+                # Variables
+                image_path = self.file_path[ self.preview_index ]
+                extension = self.File_Extension( image_path )
+                # Display Preview
+                if extension in file_anima:
+                    self.preview_state = "ANIM"
+                    self.Extra_PlayPause_Enable( True )
+                    self.imagine_preview.Display_Animation( image_path )
+                    self.Preview_Play()
+                elif extension in file_compact:
+                    self.preview_state = "COMPACT"
+                    self.layout.extra_slider.setEnabled( True )
+                    self.imagine_preview.Display_Compact( image_path )
+                else:
+                    self.preview_state = "STATIC"
+                    self.imagine_preview.Display_Path( image_path )
             else:
-                self.imagine_preview.Set_Default()
-            self.imagine_preview.update()
+                self.preview_state = "NULL"
+                self.imagine_preview.Display_Default()
     def Display_Grid( self ):
         if self.mode_index == 1:
-            # cunstruct pixmaps
-            pixmaps = []
-            n = 0
-            if self.images_found == True:
-                for v in range( 0, self.grid_vert ):
-                    for h in range( 0, self.grid_horz ):
-                        index = ( self.line_grid * self.grid_horz ) + n
-                        try:
-                            path = self.found_path[index]
-                            extension = self.Path_Extension( path )
-                            if extension in file_compress:
-                                thumbnail = self.Comp_Thumbnail( path )
-                                pixmaps.append( [h, v, path, thumbnail] )
-                            else:
-                                pixmaps.append( [h, v, path, self.found_qpixmap[index]] )
-                        except:
-                            pixmaps.append( [h, v, self.null_path, self.null_qpixmap] )
-                        n += 1
+            # Display
+            if self.file_found == True:
+                self.imagine_grid.Display_Path( self.file_path, self.preview_index )
             else:
-                for v in range( 0, self.grid_vert ):
-                    for h in range( 0, self.grid_horz ):
-                        pixmaps.append( [h, v, self.null_path, self.null_qpixmap] )
-            # send pixmaps
-            self.imagine_grid.Set_QPixmaps( self.images_found, pixmaps )
-            self.imagine_grid.update()
+                self.imagine_grid.Display_Default()
     def Display_Reference( self ):
         if self.mode_index == 2:
-            self.Board_Loader( self.list_pin_ref )
-            self.imagine_reference.update()
-
-    def Search_Previous( self, index_name ):
-        if self.images_found == True:
-            # Default Index
-            index = 0
-            # Search Path
-            for i in range( 0, len( self.found_path ) ):
-                if index_name == self.found_path[i]:
-                    index = i
-                    break
-            # Swap Image
-            self.Preview_GoTo( index )
-
-    #endregion
-    #region Threads ################################################################
-    def Thumbnail_Start( self, SIGNAL_LOAD ):
-        # Prepare Widgets for Thread
-        self.Index_Block( True )
-        self.Widget_Enable( False )
-        self.layout.progress_bar.setMaximum( self.preview_max )
-        # Variables
-        self.found_qpixmap = []
-        self.counter = 0
-        self.layout.index_number.setMinimum( 0 )
-        self.layout.index_number.setMaximum( qt_max )
-
-        # Range
-        grid_tl = self.line_grid * self.grid_horz
-        grid_br = grid_tl + self.grid_table
-        limit_l = Limit_Range( grid_tl - self.cache_thread, 0, self.preview_max )
-        limit_r = Limit_Range( grid_br + self.cache_thread, 0, self.preview_max )
-
-        # Display
-        self.placeholder_text = self.layout.search.placeholderText()
-        self.layout.search.setPlaceholderText( "Thumbnail Cache" )
-
-        # Start Threads operations
-        self.thread_thumbnails.Variables_Run( os.path.basename( self.directory_path ), self.found_path, self.preview_max, limit_l, limit_r )
-        self.thread_thumbnails.start()
-    def Thumbnail_Image( self, SIGNAL_IMAGE ):
-        # Recieve Image
-        self.found_qpixmap.append( SIGNAL_IMAGE )
-        # Display Progress
-        self.layout.progress_bar.setValue( self.counter )
-        self.layout.index_number.setValue( self.counter + 1 )
-        self.layout.progress_bar.update()
-        self.layout.index_number.update()
-        self.counter += 1 # Increment Counter for next cycle
-    def Thumbnail_Reset( self, SIGNAL_RESET ):
-        self.thread_thumbnails.quit()
-        self.layout.progress_bar.setValue( 0 )
-        self.Index_Range( 1, self.preview_max )
-        self.Widget_Enable( True )
-        self.Index_Block( False )
-        self.Preview_GoTo( self.preview_index )
-        self.layout.search.setPlaceholderText( self.placeholder_text )
-
-    def Namelist_Start( self, path ):
-        # Prepare Widgets for Thread
-        self.imagine_preview.Set_Default()
-        self.Index_Block( True )
-        self.Widget_Enable( False )
-
-        # Display
-        self.placeholder_text = self.layout.search.placeholderText()
-        self.layout.search.setPlaceholderText( "Compressed Check" )
-
-        # Create New Thread
-        self.thread_namelist.Variables_Run( path, self.file_extension )
-        self.thread_namelist.start()
-    def Namelist_Input( self, lista ):
-        # Thread
-        self.thread_namelist.quit()
-        # Widgets
-        self.Widget_Enable( True )
-        self.Index_Block( False )
-        self.layout.search.setPlaceholderText( self.placeholder_text )
-        # Parsing Variabls
-        path = lista[0]
-        name_list = lista[1]
-        string = lista[2]
-        self.comp_index = 0
-        self.comp_max = len( name_list )
-
-        # Update
-        if len( name_list ) > 0:
-            # Log Viewer
-            try:QtCore.qDebug( string )
-            except:pass
-            # Update
-            self.Menu_CompPanel( True )
-            self.imagine_preview.Set_Comp_Preview( path, name_list )
-            self.imagine_preview.Set_Unpress()
-
-    #endregion
-    #region Signals ################################################################
-    # Mode
-    def Context_Mode( self, SIGNAL_MODE ):
-        self.Mode_Index( SIGNAL_MODE )
-
-    # Mouse Stylus
-    def Drag_Drop( self, image_path ):
-        thumb_size = 200
-        extension = os.path.splitext( image_path )[1][1:]
-        if extension == "svg":
-            # QImage
-            qimage = QImage( image_path )
-            try: qimage_scaled = qimage.scaled( thumb_size, thumb_size, Qt.KeepAspectRatio, Qt.SmoothTransformation )
-            except: qimage_scaled = qimage
-            qpixmap = QPixmap().fromImage( qimage_scaled )
-            # MimeData
-            qimage = QImage( image_path )
-            mimedata = QMimeData()
-            url = QUrl().fromLocalFile( image_path )
-            mimedata.setUrls( [url] )
-            mimedata.setImageData( qimage )
-            mimedata.setData( image_path, image_path.encode() )
-            # Clipboard
-            clipboard = QApplication.clipboard().setImage( qimage )
-            # Drag
-            drag = QDrag( self )
-            drag.setMimeData( mimedata )
-            drag.setPixmap( qpixmap )
-            drag.setHotSpot( QPoint( int( qimage_scaled.width() * 0.5 ) , int( qimage_scaled.height() * 0.5 ) ) )
-            drag.exec_( Qt.CopyAction )
-        else:
-            # QImage
-            reader = QImageReader( image_path )
-            if self.clip_state == True:
-                reader.setClipRect( QRect( self.clip_px, self.clip_py, self.clip_dw, self.clip_dh ) )
-            qimage = reader.read()
-            try:
-                qimage_scaled = qimage.scaled( thumb_size, thumb_size, Qt.KeepAspectRatio, Qt.SmoothTransformation )
-            except:
-                qimage_scaled = qimage
-            qpixmap = QPixmap().fromImage( qimage_scaled )
-            # MimeData
-            mimedata = QMimeData()
-            url = QUrl().fromLocalFile( image_path )
-            mimedata.setUrls( [url] )
-            if ( self.insert_size_bool == True and ( self.canvas() is not None ) and ( self.canvas().view() is not None ) ):
-                ad = Krita.instance().activeDocument()
-                scale_width = ad.width() * self.image_scale
-                scale_height = ad.height() * self.image_scale
-            else:
-                scale_width = qimage.width() * self.image_scale
-                scale_height = qimage.height() * self.image_scale
-            try:
-                mimedata.setImageData( qimage.scaled( scale_width, scale_height, Qt.KeepAspectRatio, Qt.SmoothTransformation ) )
-            except:
-                mimedata.setImageData( qimage )
-            # Clipboard
-            clipboard = QApplication.clipboard().setImage( qimage )
-            # Drag
-            drag = QDrag( self )
-            drag.setMimeData( mimedata )
-            drag.setPixmap( qpixmap )
-            drag.setHotSpot( QPoint( int( qimage_scaled.width() * 0.5 ) , int( qimage_scaled.height() * 0.5 ) ) )
-            drag.exec_( Qt.CopyAction )
-
-    # File
-    def File_Clip( self, SIGNAL_CLIP ):
-        self.clip_state = SIGNAL_CLIP[0]
-        self.clip_px = SIGNAL_CLIP[1]
-        self.clip_py = SIGNAL_CLIP[2]
-        self.clip_dw = SIGNAL_CLIP[3]
-        self.clip_dh = SIGNAL_CLIP[4]
-    def File_Location( self, SIGNAL_LOCATION ):
-        kernel = str( QSysInfo.kernelType() ) # WINDOWS=winnt & LINUX=linux
-        if kernel == "winnt": # Windows
-            FILEBROWSER_PATH = os.path.join( os.getenv( 'WINDIR' ), 'explorer.exe' )
-            subprocess.run( [FILEBROWSER_PATH, '/select,', os.path.normpath( SIGNAL_LOCATION )] )
-        elif kernel == "linux": # Linux
-            QDesktopServices.openUrl( QUrl.fromLocalFile( os.path.dirname( SIGNAL_LOCATION ) ) )
-        elif okernels == "darwin": # MAC
-            QDesktopServices.openUrl( QUrl.fromLocalFile( os.path.dirname( SIGNAL_LOCATION ) ) )
-        else:
-            QDesktopServices.openUrl( QUrl.fromLocalFile( os.path.dirname( SIGNAL_LOCATION ) ) )
-
-    # Insert
-    def Insert_Document( self, SIGNAL_NEW_DOCUMENT ):
-        # Create Document
-        document = Krita.instance().openDocument( SIGNAL_NEW_DOCUMENT )
-        Application.activeWindow().addView( document )
-        # Show Message
-        Krita.instance().activeWindow().activeView().showFloatingMessage( 
-            "IB : New Document",
-            Krita.instance().icon( 'document-new' ),
-            5000,
-            0
-            )
-    def Insert_Layer( self, SIGNAL_INSERT_LAYER ):
-        if ( ( self.canvas() is not None ) and ( self.canvas().view() is not None ) and self.preview_max > 0 ):
-            image_path = SIGNAL_INSERT_LAYER
-            extension = os.path.splitext( image_path )[1][1:]
-            if extension == "svg":
-                # MimeData
-                mimedata = QMimeData()
-                url = QUrl().fromLocalFile( image_path )
-                mimedata.setUrls( [url] )
-                mimedata.setImageData( QPixmap( image_path ) )
-                mimedata.setData( image_path, image_path.encode() )
-                # Clipboard
-                clipboard = QApplication.clipboard().setMimeData( mimedata )
-                # Place Image
-                Krita.instance().action( 'edit_paste' ).trigger()
-                Krita.instance().activeDocument().refreshProjection()
-                Krita.instance().activeWindow().activeView().showFloatingMessage( 
-                    "IB : Vector Layer Insert",
-                    Krita.instance().icon( 'vectorLayer' ),
-                    5000,
-                    0
-                    )
-            else: # Default Case for all static Images. This excludes animated GIFs.
-                # QImage
-                reader = QImageReader( image_path )
-                if self.clip_state == True:
-                    reader.setClipRect( QRect( self.clip_px, self.clip_py, self.clip_dw, self.clip_dh ) )
-                qimage = reader.read()
-                if QPixmap().fromImage( qimage ).isNull() == False:
-                    if self.insert_size_bool == True:
-                        ad = Krita.instance().activeDocument()
-                        doc_width = ad.width()
-                        doc_height = ad.height()
-                        qimage = qimage.scaled( doc_width * self.image_scale, doc_height * self.image_scale, Qt.KeepAspectRatio, Qt.SmoothTransformation )
-                    else:
-                        size = max( qimage.size().width(), qimage.size().height() )
-                        qimage = qimage.scaled( size * self.image_scale, size * self.image_scale, Qt.KeepAspectRatio, Qt.SmoothTransformation )
-                # MimeData
-                mimedata = QMimeData()
-                url = QUrl().fromLocalFile( image_path )
-                mimedata.setUrls( [url] )
-                mimedata.setImageData( qimage )
-                # Clipboard
-                clipboard = QApplication.clipboard().setImage( qimage )
-                # Place Image
-                Krita.instance().action( 'edit_paste' ).trigger()
-                Krita.instance().activeDocument().refreshProjection()
-                Krita.instance().activeWindow().activeView().showFloatingMessage( 
-                    "IB : Paint Layer Insert",
-                    Krita.instance().icon( 'paintLayer' ),
-                    5000,
-                    0
-                    )
-    def Insert_Reference( self, SIGNAL_INSERT_REFERENCE ):
-        if ( ( self.canvas() is not None ) and ( self.canvas().view() is not None ) and self.preview_max > 0 ):
-            reader = QImageReader( SIGNAL_INSERT_REFERENCE )
-            if self.clip_state == True:
-                reader.setClipRect( QRect( self.clip_px, self.clip_py, self.clip_dw, self.clip_dh ) )
-            qimage = reader.read()
-            if QPixmap().fromImage( qimage ).isNull() == False:
-                if self.insert_size_bool == True:
-                    ad = Krita.instance().activeDocument()
-                    doc_width = ad.width()
-                    doc_height = ad.height()
-                    qimage = qimage.scaled( doc_width * self.image_scale, doc_height * self.image_scale, Qt.KeepAspectRatio, Qt.SmoothTransformation )
-                else:
-                    size = max( qimage.size().width(), qimage.size().height() )
-                    qimage = qimage.scaled( size * self.image_scale, size * self.image_scale, Qt.KeepAspectRatio, Qt.SmoothTransformation )
-            # MimeData
-            mimedata = QMimeData()
-            url = QUrl().fromLocalFile( SIGNAL_INSERT_REFERENCE )
-            mimedata.setUrls( [url] )
-            mimedata.setImageData( qimage )
-            # Clipboard
-            clipboard = QApplication.clipboard().setImage( qimage )
-            # Place Image
-            Krita.instance().action( 'paste_as_reference' ).trigger()
-            Krita.instance().activeDocument().refreshProjection()
-            Krita.instance().activeWindow().activeView().showFloatingMessage( 
-                "IB : Reference Insert",
-                Krita.instance().icon( 'krita_tool_reference_images' ),
-                5000,
-                0
-                )
-
-    # Neutral Press
-    def Click_Press( self, SIGNAL_PRESS ):
-        # Event
-        if SIGNAL_PRESS == True:
-            if (self.mode_index == 0 or self.mode_index == 1):
-                self.layout.search.setMaximumWidth( 0 )
-                self.layout.label.setMaximumWidth( 16777215 )
-        if SIGNAL_PRESS == False:
-            if (self.mode_index == 0 or self.mode_index == 1):
-                self.layout.search.setMaximumWidth( 16777215 )
-                self.layout.label.setMaximumWidth( 0 )
-
-        # Function
-        self.Function_Operation()
-    def Text_Display( self, SIGNAL_TEXT ):
-        self.layout.label.setText( SIGNAL_TEXT )
-
-    # Color
-    def Color_Analyse( self, SIGNAL_ANALYSE ):
-        if self.MODULE_pigmento_bool == True:
-            analyse = self.pigment_o.Script_Image_Analyse( SIGNAL_ANALYSE )
-
-    # Extension
-    def Shortcut_Browse( self, SIGNAL_BROWSE ):
-        if self.mode_index == 0:
-            if self.menu_comp == True:
-                self.Preview_Comp_Increment( SIGNAL_BROWSE )
-            else:
-                self.Preview_Index_Increment( SIGNAL_BROWSE )
-        if self.mode_index == 1:
-            self.Grid_Index_Increment( SIGNAL_BROWSE )
-        if self.mode_index == 2:
-            if SIGNAL_BROWSE == -1:
-                self.Reference_Undo()
-            if SIGNAL_BROWSE == 1:
-                self.Reference_Redo()
+            pass
 
     #endregion
     #region Index ##################################################################
+
+    # Widgets
     def Index_Block( self, boolean ):
         self.layout.index_slider.blockSignals( boolean )
         self.layout.index_number.blockSignals( boolean )
@@ -1953,1151 +1621,1031 @@ class ImagineBoard_Docker( DockWidget ):
         # Number
         self.layout.index_number.setMinimum( minimum )
         self.layout.index_number.setMaximum( maximum )
-        self.layout.index_number.setSuffix( ":" + str( maximum ) )
-    def Index_Enable( self, boolean ):
-         if self.slideshow_play == False:
-            self.layout.index_slider.setEnabled( boolean )
-            self.layout.index_number.setEnabled( boolean )
+        self.layout.index_number.setSuffix( f":{ maximum }" )
     def Index_Values( self, value ):
         self.Index_Block( True )
-        self.layout.index_slider.setValue( value+1 )
-        self.layout.index_number.setValue( value+1 )
+        self.layout.index_slider.setValue( value + 1 )
+        self.layout.index_number.setValue( value + 1 )
         self.Index_Block( False )
     def Index_Slider( self, value ):
         self.Index_Block( True )
-        self.preview_index = int( value-1 ) # Humans start at 1 and script starts at 0
+        self.preview_index = value - 1 # Humans start at 1 and script starts at 0
         self.layout.index_number.setValue( value )
-        if self.images_found == True:
+        if self.file_found == True:
             self.Display_Update()
         self.Index_Block( False )
     def Index_Number( self, value ):
-        # Enable
         self.Index_Block( True )
-        # Mode
-        self.preview_index = int( value-1 ) # Humans start at 1 and script starts at 0
-        self.layout.index_slider.setValue( int( value ) )
-        if self.images_found == True:
+        self.preview_index = value - 1 # Humans start at 1 and script starts at 0
+        self.layout.index_slider.setValue( value )
+        if self.file_found == True:
             self.Display_Update()
-        # Enable
         self.Index_Block( False )
-
-    def Preview_Index_Increment( self, SIGNAL_UNIT ):
-        if self.images_found == True:
-            if self.anim_playpause == False:
-                self.Preview_PlayPause( True )
-            self.preview_index += SIGNAL_UNIT
-            self.preview_index = Limit_Range( self.preview_index, 0, self.preview_max-1 )
-            self.Index_Values( self.preview_index )
-            self.Display_Update()
-    def Preview_Comp_Increment( self, SIGNAL_UNIT ):
-        value = self.layout.comp_slider.value() + SIGNAL_UNIT
-        self.layout.comp_slider.setValue( value )
-    def Grid_Index_Increment( self, SIGNAL_UNIT ):
-        if self.anim_playpause == False:
-            self.Preview_PlayPause( True )
-        self.line_grid += Limit_Range( SIGNAL_UNIT, 0, self.preview_max-1 )
-        self.preview_index += ( SIGNAL_UNIT * self.grid_horz )
-        self.preview_index = Limit_Range( self.preview_index, 0, self.preview_max-1 )
-        self.Index_Values( self.preview_index )
-        if self.images_found == True:
-            self.Display_Update()
-
-    #endregion
-    #region Compression ############################################################
-    def Comp_Block( self, boolean ):
-        self.layout.comp_slider.blockSignals( boolean )
-        self.layout.comp_number.blockSignals( boolean )
-    def Comp_Range( self, maximum ):
-        # Slider
-        self.layout.comp_slider.setValue( 1 )
-        self.layout.comp_slider.setMinimum( 1 )
-        self.layout.comp_slider.setMaximum( maximum )
-        # Number
-        self.layout.comp_number.setValue( 1 )
-        self.layout.comp_number.setMinimum( 1 )
-        self.layout.comp_number.setMaximum( maximum )
-        self.layout.comp_number.setSuffix( ":" + str( maximum ) )
-    def Comp_Values( self, value ):
-        self.Comp_Block( True )
-        self.layout.comp_slider.setValue( value+1 )
-        self.layout.comp_number.setValue( value+1 )
-        self.Comp_Block( False )
-
-    def Comp_Slider( self, value ):
-        self.Comp_Block( True )
-        self.comp_index = int( value-1 ) # Humans start at 1 and script starts at 0
-        self.layout.comp_number.setValue( value )
-        self.imagine_preview.Comp_Frame( self.comp_index )
-        self.Comp_Block( False )
-    def Comp_Number( self, value ):
-        self.Comp_Block( True )
-        self.comp_index = int( value-1 ) # Humans start at 1 and script starts at 0
-        self.layout.comp_slider.setValue( value )
-        self.imagine_preview.Comp_Frame( self.comp_index )
-        self.Comp_Block( False )
-
-    def Preview_Comp_Increment( self, SIGNAL_UNIT ):
-        if self.menu_comp == True:
-            self.Comp_Block( True )
-            self.comp_index += SIGNAL_UNIT
-            self.comp_index = Limit_Range( self.comp_index, 0, self.comp_max-1 )
-            self.Comp_Values( self.comp_index )
-            self.imagine_preview.Comp_Frame( self.comp_index )
-            self.Comp_Block( False )
-
-    def Comp_Thumbnail( self, path ):
-        thumbnail = self.null_qpixmap
-        try:
-            if zipfile.is_zipfile( path ):
-                archive = zipfile.ZipFile( path, "r" )
-                name_list = archive.namelist()
-                for i in range( 0, len( name_list ) ):
-                    try:
-                        archive_open = archive.open( name_list[i] )
-                        archive_read = archive_open.read()
-                        image = QImage()
-                        image.loadFromData( archive_read )
-                        pixmap = QPixmap().fromImage( image )
-                        if pixmap.isNull() == False:
-                            thumbnail = pixmap
-                            break
-                    except:
-                        pass
-        except:
-            pass
-        return thumbnail
 
     #endregion
     #region Preview ################################################################
-    def Preview_GoTo( self, SIGNAL_VALUE ):
-        if self.images_found == True:
-            self.preview_index = Limit_Range( SIGNAL_VALUE, 0, self.preview_max-1 )
-            self.Index_Values( self.preview_index )
+
+    # Preview Operations
+    def Preview_Increment( self, increment ):
+        if self.file_found == True:
+            if self.preview_state == "COMPACT":
+                if increment < 0:
+                    self.imagine_preview.Comp_Back()
+                if increment > 0:
+                    self.imagine_preview.Comp_Forward()
+            else:
+                index = Limit_Range( self.preview_index + increment, 0, self.preview_max - 1 )
+                self.Preview_Index( index )
+    def Preview_Index( self, index ):
+        if ( self.file_found == True and self.preview_index != index ):
+            self.preview_index = Limit_Range( index, 0, self.preview_max )
+            self.Index_Values( index )
             self.Display_Update()
-    def Preview_Random( self, SIGNAL_RANDOM ):
+    def Preview_String( self, file_name ):
+        if ( self.file_found == True and file_name != None ):
+            for i in range( 0, len( self.file_path ) ):
+                path = self.file_path[i]
+                basename = os.path.basename( path )
+                if basename == file_name:
+                    self.Preview_Index( i )
+                    break
+    def Preview_Random( self ):
         random_value = self.preview_index
         while random_value == self.preview_index:
-            random_value = Random_Range( self.preview_max-1 )
-        self.Preview_GoTo( random_value )
-    def Preview_Find( self, basename ):
-        if self.images_found == True:
-            for i in range( 0, len( self.found_path ) ):
-                name = os.path.basename( self.found_path[i] )
-                if name == basename:
-                    self.Preview_GoTo( i )
+            random_value = Random_Range( self.preview_max - 1 )
+        self.Preview_Index( random_value )
+    def Preview_Internet( self, url ):
+        qpixmap = self.Download_QPixmap( url )
+        if qpixmap != None:
+            self.Mode_Index( 0 )
+            self.imagine_preview.Display_QPixmap( qpixmap )
 
-    def Preview_SlideShow_Switch( self, SIGNAL_SLIDESHOW ):
-        self.slideshow_play = SIGNAL_SLIDESHOW
+    # SlideShow
+    def Preview_SlideShow_Switch( self, slideshow_play ):
+        self.slideshow_play = slideshow_play
         if self.slideshow_play == True:
-            # Icons
+            # UI
             self.layout.slideshow.setIcon( Krita.instance().icon( 'media-playback-stop' ) )
             self.layout.slideshow.setToolTip( "SlideShow Stop" )
-            # Enabled
-            self.layout.mode.setEnabled( False )
-            self.layout.folder.setEnabled( False )
-            self.layout.thread.setEnabled( False )
-            self.layout.search.setEnabled( False )
-            self.layout.index_slider.setEnabled( False )
-            self.layout.index_number.setEnabled( False )
             # Timer
-            self.timer.start( self.slideshow_time )
+            self.qtimer.start( self.slideshow_time )
         else:
-            # Icons
+            # UI
             self.layout.slideshow.setIcon( Krita.instance().icon( 'media-playback-start' ) )
             self.layout.slideshow.setToolTip( "SlideShow Play" )
-            # Enabled
-            self.layout.mode.setEnabled( True )
-            self.layout.folder.setEnabled( True )
-            self.layout.thread.setEnabled( True )
-            self.layout.search.setEnabled( True )
-            self.layout.index_slider.setEnabled( True )
-            self.layout.index_number.setEnabled( True )
             # Timer
-            self.timer.stop()
-        self.dirty = 5
-    def Preview_SlideShow_Play( self ):
+            self.qtimer.stop()
+    def Preview_SlideShow_Timer( self ):
         if self.slideshow_sequence == "Linear":
-            loop = self.preview_index + 1
-            self.preview_index = Limit_Loop( loop, self.preview_max-1 )
-            self.Preview_GoTo( self.preview_index )
+            index = Limit_Loop( self.preview_index + 1, self.preview_max - 1 )
+            self.Preview_Index( index )
         if self.slideshow_sequence == "Random":
             # Clear for a full Cycle
             if len( self.slideshow_lottery ) == self.preview_max:
                 self.slideshow_lottery.clear()
             # Lottery Random
-            number = random.randint( 0, self.preview_max-1 )
-            while number in self.slideshow_lottery:
-                number = random.randint( 0, self.preview_max-1 )
-            self.slideshow_lottery.append( number )
-            self.Preview_GoTo( number )
+            while True:
+                number = random.randint( 0, self.preview_max - 1 )
+                if number not in self.slideshow_lottery:
+                    self.slideshow_lottery.append( number )
+                    self.Preview_Index( number )
+                    break
 
-    def Preview_PlayPause( self, playpause ):
-        self.anim_playpause = playpause
-        if self.anim_playpause == True:
-            self.Preview_Play()
+    # Extra Interface
+    def Preview_ExtraPanel( self, boolean ):
+        if self.mode_index == 0 and boolean == True:
+            value = qt_max
         else:
-            self.Preview_Pause()
+            value = 0
+        self.layout.extra_panel.setMaximumHeight( value )
+    def ExtraPanel_Shrink( self ):
+        # Container
+        self.layout.extra_panel.setMaximumHeight( 0 )
+        # Widgets
+        self.layout.extra_slider.setEnabled( False )
+    # Extra Slider
+    def Extra_PlayPause_Enable( self, boolean ):
+        self.layout.extra_playpause.setEnabled( boolean )
+        self.layout.extra_playpause.setChecked( False )
+        self.layout.extra_playpause.setIcon( self.qicon_anim_play )
+    def Extra_Slider_Value( self, value ):
+        self.layout.extra_slider.blockSignals( True )
+        self.layout.extra_slider.setValue( value )
+        self.layout.extra_slider.blockSignals( False )
+    def Extra_Slider_Maximum( self, value ):
+        self.layout.extra_slider.setMaximum( value )
+
+    # Animation & Compact
     def Preview_Play( self ):
-        self.layout.anim_playpause.setIcon( Krita.instance().icon( 'animation_pause' ) )
-        self.imagine_preview.Anim_Play()
-    def Preview_Pause( self ):
-        self.layout.anim_playpause.setIcon( Krita.instance().icon( 'animation_play' ) )
-        self.imagine_preview.Anim_Pause()
-    def Preview_Frame_Back( self ):
-        if self.anim_playpause == True:
-            self.anim_playpause = False
-            self.Preview_Pause()
-        else:
-            self.imagine_preview.Anim_Frame_Back()
-    def Preview_Frame_Forward( self ):
-        if self.anim_playpause == True:
-            self.anim_playpause = False
-            self.Preview_Pause()
-        else:
-            self.imagine_preview.Anim_Frame_Forward()
-    def Preview_Frame_Display( self, SIGNAL_FRAME ):
-        self.layout.anim_frame_display.setText( SIGNAL_FRAME )
-    def Preview_Screenshot( self ):
-        self.imagine_preview.Anim_Screenshot()
+        if self.preview_state == "ANIM":
+            self.layout.extra_playpause.setChecked( False )
+    def Preview_PlayPause( self, preview_playpause ):
+        if self.preview_state == "ANIM":
+            self.preview_playpause = preview_playpause
+            if preview_playpause == True: # Paused
+                self.layout.extra_playpause.setIcon( self.qicon_anim_pause )
+                self.Preview_Enable( True )
+                self.imagine_preview.Anim_Pause()
+            if preview_playpause == False: # Playing
+                self.layout.extra_playpause.setIcon( self.qicon_anim_play )
+                self.Preview_Enable( False )
+                self.imagine_preview.Anim_Play()
+    def Preview_Enable( self, boolean ):
+            self.layout.extra_back.setEnabled( boolean )
+            self.layout.extra_forward.setEnabled( boolean )
+            self.layout.extra_slider.setEnabled( boolean )
+    def Preview_Back( self ):
+        if self.preview_state == "ANIM":
+            self.imagine_preview.Anim_Back()
+        if self.preview_state == "COMPACT":
+            self.imagine_preview.Comp_Back()
+    def Preview_Forward( self ):
+        if self.preview_state == "ANIM":
+            self.imagine_preview.Anim_Forward()
+        if self.preview_state == "COMPACT":
+            self.imagine_preview.Comp_Forward()
+    def Preview_Slider( self, value ):
+        if self.preview_state == "ANIM":
+            self.imagine_preview.Anim_Frame( value )
+        if self.preview_state == "COMPACT":
+            self.imagine_preview.Comp_Index( value )
+    def Preview_Logger( self, string ):
+        self.layout.extra_label.setText( string )
 
     #endregion
     #region Grid ###################################################################
-    def Grid_Name( self, SIGNAL_NAME ):
-        num = self.grid_to_prev( self.line_grid, self.grid_horz, SIGNAL_NAME[0], SIGNAL_NAME[1] )
-        if ( self.images_found == True and num < self.preview_max ):
-            self.preview_index = Limit_Range( num, 0, self.preview_max-1 )
-            self.Index_Values( self.preview_index )
-    def Grid_Preview( self, SIGNAL_PREVIEW ):
-        self.preview_index = self.grid_to_prev( self.line_grid, self.grid_horz, SIGNAL_PREVIEW[0], SIGNAL_PREVIEW[1] )
-        self.Preview_GoTo( self.preview_index )
-        self.Mode_Index( 0 )
+
+    def Grid_Increment( self, increment ):
+        self.imagine_grid.Grid_Increment( increment )
 
     #endregion
     #region Reference ##############################################################
-    def Reference_Insert( self, SIGNAL_REFERENCE ):
-        # Parsing
-        path = SIGNAL_REFERENCE["path"]
-        text = SIGNAL_REFERENCE["text"]
-        origin_x = SIGNAL_REFERENCE["origin_x"]
-        origin_y = SIGNAL_REFERENCE["origin_y"]
 
-        #region Image
-        point_size = 15.0
-        if ( text == None or text == "" ):
-            path = os.path.normpath( path )
+    # Reference Operations
+    def Reference_Increment( self, increment ):
+        pass
+
+    # Pin
+    def Pin_Image( self, pin ):
+        image_path = pin["image_path"]
+        check_html = self.Check_Html( image_path )
+        if check_html == True:
+            self.Pin_Insert( tipo="image", bx=pin["bx"], by=pin["by"], text=None, path=None, web=image_path )
+        else:
+            self.Pin_Insert( tipo="image", bx=pin["bx"], by=pin["by"], text=None, path=image_path, web=None )
+    def Pin_Label( self, pin ):
+        self.Pin_Insert( tipo="label", bx=pin["bx"], by=pin["by"], text="Text", path=None, web=None )
+    def Pin_Insert( self, tipo, bx, by, text, path, web ):
+        # Variables
+        width = 0
+        height = 0
+
+        # Image
+        if tipo == "image" and path != None:
+            path = os.path.abspath( path )
             qpixmap = QPixmap( path )
-            if self.ref_original == True:
-                limit_w = Limit_Range( qpixmap.width(), 1, self.ref_limit )
-                limit_h = Limit_Range( qpixmap.height(), 1, self.ref_limit )
-                qpixmap_scaled = qpixmap.scaled( limit_w, limit_h, Qt.KeepAspectRatio, self.tn_smooth_scale )
-            else:
-                size = 100
-                qpixmap_scaled = qpixmap.scaled( size, size, Qt.KeepAspectRatioByExpanding, self.tn_smooth_scale )
-            width = qpixmap_scaled.width()
-            height = qpixmap_scaled.height()
-        else:
-            qfont = QFont( "Tahoma" )
-            qfont.setPointSizeF( point_size )
+            if qpixmap.isNull() == False:
+                width = int( qpixmap.width() )
+                height = int( qpixmap.height() )
+        if tipo == "image" and web != None:
+            qpixmap = self.Download_QPixmap( web )
+            try:
+                width = int( qpixmap.width() )
+                height = int( qpixmap.height() )
+            except:
+                self.Message_Warnning( "ERROR", "access failed")
+        # Label
+        if tipo == "label":
+            qpixmap = None
+            width = 200
+            height = 100
 
-            font_metrics = QFontMetricsF( qfont )
-            text_rect = font_metrics.boundingRect( text )
-            width = text_rect.width()
-            height = text_rect.height()
-
-            qpixmap = QPixmap( width, height )
-        point_ratio = height / point_size
-        w2 = width * 0.5
-        h2 = height * 0.5
-
-        #endregion
-        #region Variables
-
-        # Sorting
-        index = int( 0 )
-        active = False
-        select = False
-        pack = False
-        # Text
-        color = "#595959"
-        # Move
-        relative_x = 0.0
-        relative_y = 0.0
-        # Rotation
-        rotation_neutral = Trig_2D_Points_Lines_Angle( width,0, 0,0, width, height )
-        rotation_offset = 0.0
-        # Scale
-        scale_size = Trig_2D_Points_Distance( 0,0, width*0.5,height*0.5 )
-        scale_relative = 1.0
-        # Draw
-        draw_x = origin_x - w2
-        draw_y = origin_y - h2
-        draw_w = width
-        draw_h = height
-        draw_xw = origin_x + w2
-        draw_yh = origin_y + h2
-        if self.clip_state == True:
-            pixmap_w = qpixmap.width()
-            pixmap_h = qpixmap.height()
-            cl = ( self.clip_px ) / pixmap_w
-            cr = ( self.clip_px + self.clip_dw ) / pixmap_w
-            ct = ( self.clip_py ) / pixmap_h
-            cb = ( self.clip_py + self.clip_dh ) / pixmap_h
-        else:
-            cl = 0.0
-            cr = 1.0
-            ct = 0.0
-            cb = 1.0
-        # Bounding Box
-        bl = origin_x - w2
-        br = origin_x + w2
-        bt = origin_y - h2
-        bb = origin_y + h2
-        bw = abs( br - bl )
-        bh = abs( bb - bt )
-        # Dimensions
-        perimeter = ( 2 * width ) + ( 2 * height )
-        area = width * height
-        if ( width != 0 and height != 0 ):
-            ratio = float( width / height )
-        else:
-            ratio = 0.0
-        pack = False
-        # Edits
-        edit_grayscale = False
-        edit_flip_x = False
-        edit_flip_y = False
-
-        #endregion
-        #region Pin
-
-        pin = {
-            # Path to File ( new entries to "Board_Loader" also )
-            "path"       : path,
-            # Sorting
-            "index"      : index,
-            "active"     : active,
-            "select"     : select,
-            "pack"       : pack,
-            # Text
-            "text"       : text,
-            "color"      : color,
-            "pis"        : point_size,
-            "pir"        : point_ratio,
-            # Move
-            "ox"         : origin_x,
-            "oy"         : origin_y,
-            "rx"         : relative_x,
-            "ry"         : relative_y,
-            # Rotation
-            "rn"         : rotation_neutral,
-            "ro"         : rotation_offset,
-            # Scale
-            "ss"         : scale_size,
-            "sr"         : scale_relative,
-            # Draw
-            "dx"         : draw_x,
-            "dy"         : draw_y,
-            "dw"         : draw_w,
-            "dh"         : draw_h,
-            "dxw"        : draw_xw,
-            "dyh"        : draw_yh,
-            # Clip
-            "cl"         : cl, # 0-1 left-right
-            "cr"         : cr, # 0-1 left-right
-            "ct"         : ct, # 0-1 top-bot
-            "cb"         : cb, # 0-1 top-bot
-            # Bound Box
-            "bl"         : bl,
-            "br"         : br,
-            "bt"         : bt,
-            "bb"         : bb,
-            "bw"         : bw,
-            "bh"         : bh,
-            # Dimensions
-            "perimeter"  : perimeter,
-            "area"       : area,
-            "ratio"      : ratio,
-            # Edits
-            "egs"        : edit_grayscale,
-            "efx"        : edit_flip_x,
-            "efy"        : edit_flip_y,
-            # Pixmap Load ( This is never Loaded, Module Loads once recieved )
-            "qpixmap"    : None,
-            "render"     : None,
-            }
-
-        self.list_pin_ref.append( pin )
-        self.imagine_reference.Pin_Ref( pin )
-
-        #endregion
-
-    def Board_Loader( self, lista ):
-        # Progress Bar
-        self.Progress_Value( 0 )
-        self.Progress_Max( len( lista ) )
-
-        self.list_pin_ref = []
-        for i in range( 0, len( lista ) ):
-            # Progress Bar
-            self.Progress_Value( i+1 )
+        # Valid Reference Pin
+        if ( width > 0 and height > 0 ):
+            # Fit
+            if ( tipo == "image" and self.ref_import == False ):
+                side = 200
+                fx = side / width
+                fy = side / height
+                if width >= height:
+                    sx = width * fy
+                    sy = side
+                else:
+                    sx = side
+                    sy = height * fx
+                width = int( sx )
+                height = int( sy )
 
             # Variables
-            pin = {}
-            item_i = lista[i]
+            w2 = width * 0.5
+            h2 = height * 0.5
 
-            # Path
-            try:
-                path = item_i["path"]
-                check_path = os.path.exists( path )
-            except:
-                path = None
-                check_path = None
+            # Bounding Box
+            bl = int( bx - w2 )
+            br = int( bx + w2 )
+            bt = int( by - h2 )
+            bb = int( by + h2 )
+            bw = int( abs( br - bl ) )
+            bh = int( abs( bb - bt ) )
+
+            # Clip
+            cl = 0
+            cr = 1
+            ct = 0
+            cb = 1
+            cw = 1
+            ch = 1
+
+            # ID
+            index = len( self.list_reference )
+            # State
+            render = True
+            active = False
+            select = False
+            pack = False
+            # Transform
+            rotation_z = 0
+            scale_constant = Trig_2D_Points_Distance( 0, 0, bw, bh )
+            scale_width = bw
+            scale_height = bh
+            # Dimensions
+            area = bw * bh
+            perimeter = ( 2 * bw ) + ( 2 * bh )
+            ratio = bw / bh
+            pack = False
+            # Edits
+            edit_grayscale = False
+            edit_flip_x = False
+            edit_flip_y = False
             # Text
-            try:
-                check_text = item_i["text"]
-            except:
-                check_text = None
+            font = "Consolas"
+            letter = 20
+            pen = self.color_1.name()
+            bg = self.color_2.name()
+            # QPixmap & Draw
+            if tipo == "image":
+                draw = qpixmap.scaled( int( bw * self.ref_zoom ), int( bh * self.ref_zoom ), Qt.IgnoreAspectRatio, Qt.FastTransformation )
+            else:
+                qpixmap = None
+                draw = None
+            zdata = None
 
-            # Construct Display
-            if ( check_path == True or check_text != None ):
-                # Variables
-                ox = 100
-                oy = 100
-                if check_path == True:
-                    qpixmap = QPixmap( path )
-                    width = qpixmap.width()
-                    height = qpixmap.height()
-                else:
-                    width = 1
-                    height = 1
-
-                # Path
-                try:     pin["path"] = path
-                except:  pin["path"] = None
-                # Sorting
-                try:     pin["index"] = item_i["index"]
-                except:  pin["index"] = 0
-                try:     pin["active"] = item_i["active"]
-                except:  pin["active"] = False
-                try:     pin["select"] = item_i["select"]
-                except:  pin["select"] = False
-                try:     pin["pack"] = item_i["pack"]
-                except:  pin["pack"] = False
-                # Text
-                try:     pin["text"] = item_i["text"]
-                except:  pin["text"] = None
-                try:     pin["color"] = item_i["color"]
-                except:  pin["color"] = "#595959"
-                try:     pin["pis"] = item_i["pis"]
-                except:  pin["pis"] = 15
-                try:     pin["pir"] = item_i["pir"]
-                except:  pin["pir"] = 24/15
-                # Move
-                try:     pin["ox"] = item_i["ox"]
-                except:  pin["ox"] = ox
-                try:     pin["oy"] = item_i["oy"]
-                except:  pin["oy"] = oy
-                try:     pin["rx"] = item_i["rx"]
-                except:  pin["rx"] = 0
-                try:     pin["ry"] = item_i["ry"]
-                except:  pin["ry"] = 0
-                # Rotation
-                try:     pin["rn"] = item_i["rn"]
-                except:  pin["rn"] = Trig_2D_Points_Lines_Angle( width,0, 0,0, width, height )
-                try:     pin["ro"] = item_i["ro"]
-                except:  pin["ro"] = 0
-                # Scale
-                try:     pin["ss"] = item_i["ss"]
-                except:  pin["ss"] = Trig_2D_Points_Distance( 0,0, width,height ) * 0.5
-                try:     pin["sr"] = item_i["sr"]
-                except:  pin["sr"] = 1
-                # Draw
-                try:     pin["dx"] = item_i["dx"]
-                except:  pin["dx"] = ox - ( width * 0.5 )
-                try:     pin["dy"] = item_i["dy"]
-                except:  pin["dy"] = oy - ( height * 0.5 )
-                try:     pin["dw"] = item_i["dw"]
-                except:  pin["dw"] = width
-                try:     pin["dh"] = item_i["dh"]
-                except:  pin["dh"] = height
-                try:     pin["dxw"] = item_i["dxw"]
-                except:  pin["dxw"] = ox + ( width * 0.5 )
-                try:     pin["dyh"] = item_i["dyh"]
-                except:  pin["dyh"] = oy + ( height * 0.5 )
+            # PIN
+            pin = {
+                # ID
+                "index"      : index, # integer
+                # Type
+                "tipo"      : tipo, # string ("image" "label")
+                # State
+                "render"     : render, # bool
+                "active"     : active, # bool
+                "select"     : select, # bool
+                "pack"       : pack, # bool
+                # Transform
+                "trz"        : rotation_z, # float
+                "tsk"        : scale_constant, # float ( diameter of circle )
+                "tsw"        : scale_width, # float ( width with no rotation )
+                "tsh"        : scale_height, # float ( height with no rotation )
+                # Bound Box
+                "bx"         : bx, # float ( center x )
+                "by"         : by, # float ( center y )
+                "bl"         : bl, # float ( left )
+                "br"         : br, # float ( right )
+                "bt"         : bt, # float ( top )
+                "bb"         : bb, # float ( bottom )
+                "bw"         : bw, # float ( width )
+                "bh"         : bh, # float ( height )
                 # Clip
-                try:     pin["cl"] = item_i["cl"]
-                except:  pin["cl"] = 0
-                try:     pin["cr"] = item_i["cr"]
-                except:  pin["cr"] = 1
-                try:     pin["ct"] = item_i["ct"]
-                except:  pin["ct"] = 0
-                try:     pin["cb"] = item_i["cb"]
-                except:  pin["cb"] = 1
-                # Bounding Box
-                try:     pin["bl"] = item_i["bl"]
-                except:  pin["bl"] = ox - ( width * 0.5 )
-                try:     pin["br"] = item_i["br"]
-                except:  pin["br"] = oy - ( height * 0.5 )
-                try:     pin["bt"] = item_i["bt"]
-                except:  pin["bt"] = ox + ( width * 0.5 )
-                try:     pin["bb"] = item_i["bb"]
-                except:  pin["bb"] = oy + ( height * 0.5 )
-                try:     pin["bw"] = item_i["bw"]
-                except:  pin["bw"] = width
-                try:     pin["bh"] = item_i["bh"]
-                except:  pin["bh"] = height
+                "cl"         : cl, # float
+                "cr"         : cr, # float
+                "ct"         : ct, # float
+                "cb"         : cb, # float
+                "cw"         : cw, # float
+                "ch"         : ch, # float
                 # Dimensions
-                try:     pin["perimeter"] = item_i["perimeter"]
-                except:  pin["perimeter"] = ( 2*width ) + ( 2*height )
-                try:     pin["area"] = item_i["area"]
-                except:  pin["area"] = width * height
-                try:     pin["ratio"] = item_i["ratio"]
-                except:  pin["ratio"] = width / height
+                "area"       : area, # float
+                "perimeter"  : perimeter, # float
+                "ratio"      : ratio, # float
                 # Edits
-                try:     pin["egs"] = item_i["egs"]
-                except:  pin["egs"] = False
-                try:     pin["efx"] = item_i["efx"]
-                except:  pin["efx"] = False
-                try:     pin["efy"] = item_i["efy"]
-                except:  pin["efy"] = False
+                "egs"        : edit_grayscale, # bool
+                "efx"        : edit_flip_x, # bool
+                "efy"        : edit_flip_y, # bool
+                # Text
+                "text"       : text, # string
+                "font"       : font, # string
+                "letter"     : letter, # integer
+                "pen"        : pen, # string
+                "bg"         : bg, # string
+                # Pixmap
+                "path"       : path, # string
+                "web"        : web, # string
+                "qpixmap"    : qpixmap, # QPixmap
+                "draw"       : draw, # QPixmap
+                "zdata"      : zdata, # string of bytes
+                }
 
-                # Pixmap Load
-                pin["qpixmap"] = None
-                pin["render"] = None
-                self.list_pin_ref.append( pin )
+            # Emit
+            self.imagine_reference.Pin_Insert( pin )
 
+            # Garbage
+            del qpixmap, draw, pin
+    def Pin_Save( self, qpixmap ):
+        # File Dialog
+        file_dialog = QFileDialog( QWidget( self ) )
+        file_dialog.setFileMode( QFileDialog.AnyFile )
+        file_path = file_dialog.getSaveFileName( self, "Save Pin Location", "", "File( *.png *.jpg *.jpeg *.bmp *.ppm *.xpm *.xbm )" )[0]
+        if file_path not in [ "", ".", None ]:
+            qpixmap.save( file_path )
+
+    # Menu
+    def Reference_Menu( self, event ):
+        #region Variables
+
+        # Title
+        path = self.ref_board
+        if path not in [ "", ".", None]:
+            name = ( os.path.basename( path ) ).split( "." )[0]
+            file_path = f" [ { name } ]"
+        else:
+            file_path = ""
+        # KRA Document available
+        ad = Krita.instance().activeDocument()
+        if ad not in [ "", ".", None]:
+            basename = os.path.basename( ad.fileName() )
+            link_doc = f" [ { basename } ]"
+            check_krita = basename.endswith( ( "kra", "krz" ) ) == True
+        else:
+            link_doc = ""
+            check_krita = False
+
+        #endregion
+        #region Menu
+
+        # Menu
+        qmenu = QMenu( self )
+
+        # File
+        menu_file = qmenu.addMenu( f"File{ file_path }" )
+        action_file_new = menu_file.addAction( "New" )
+        action_file_open = menu_file.addAction( "Open" )
+        action_file_save_as = menu_file.addAction( "Save As" )
+        action_file_export = menu_file.addAction( "Export" )
+        action_file_download = menu_file.addAction( "Download" )
+        # Color
+        menu_link = qmenu.addMenu( f"Link{ link_doc }" )
+        action_link_load = menu_link.addAction( "Load" )
+        action_link_save = menu_link.addAction( "Save" )
+
+        # Disable General
+        if ( link_doc == None or check_krita == False ):
+            menu_link.setEnabled( False )
+
+        #endregion
+        #region Action
+
+        # Mapping
+        geo = self.layout.link.geometry()
+        qpoint = geo.bottomLeft()
+        position = self.layout.icon_buttons.mapToGlobal( qpoint )
+        action = qmenu.exec_( position )
+
+        # File
+        if action == action_file_new:
+            self.File_New()
+        if action == action_file_open:
+            self.File_Open()
+        if action == action_file_save_as:
+            self.File_Save_As()
+        if action == action_file_export:
+            self.File_Export()
+        if action == action_file_download:
+            self.File_Download()
+
+        # Link
+        if action == action_link_load:
+            self.Link_Load()
+        if action == action_link_save:
+            self.Link_Save()
+
+        #endregion
+
+    # File
+    def File_Load( self, path ):
+        # Board
+        if os.path.exists( path ) == True:
+            self.EO_Load( path )
+        else:
+            self.ref_board = ""
+        self.Data_Kritarc()
+        # Variables
+        self.state_load = True
+    def File_Save_St( self, list_reference ):
+        if self.state_load == True:
+            # Variabels
+            self.list_reference = list_reference
+            # Save
+            self.EO_Save( self.ref_board )
+            self.Data_Kritarc()
+    def File_New( self ):
+        ref_board = self.Dialog_Save( "New File Location", "board_000000" )
+        if ref_board != None:
+            self.ref_board = ref_board
+            self.imagine_reference.Board_Clear()
+        self.Data_Kritarc()
+    def File_Open( self ):
+        ref_board = self.Dialog_Load( "Open File Location" )
+        if ref_board != None:
+            self.EO_Load( ref_board )
+        self.Data_Kritarc()
+    def File_Save_As( self ):
+        ref_board = self.Dialog_Save( "Save File Location", "board_000000" )
+        if ref_board != None:
+            self.ref_board = ref_board
+            self.EO_Save( self.ref_board )
+        self.Data_Kritarc()
+    def File_Export( self ):
+        export_path = self.Dialog_Save( "Export File Location", "export_000000" )
+        self.EO_Export( export_path )
+    def File_Download( self ):
+        download_folder = self.Dialog_Directory( "Download Folder Location" )
+        if download_folder not in [ "", ".", None ]:
+            for item in self.list_reference:
+                tipo = item["tipo"]
+                qpixmap = item["qpixmap"]
+                if tipo == "image":
+                    # Variables
+                    path = item["path"]
+                    web = item["web"]
+                    if path != None:
+                        qpixmap = QPixmap( path )
+                        name = os.path.basename( path )
+                        save_path = os.path.join( download_folder, name )
+                    if web != None:
+                        qpixmap = self.Download_QPixmap( web )
+                        name = os.path.split( urllib.parse.urlparse( web ).path )[1]
+                        save_path = os.path.join( download_folder, name )
+                    # Save
+                    if os.path.exists( save_path ) == False:
+                        qpixmap.save( save_path )
+                    else:
+                        self.Message_Log( "ERROR", f"Path already exists { save_path }" )
+
+    # Dialog
+    def Dialog_Load( self, title ):
+        if self.ref_board in [ "", ".", None ]:
+            directory = self.directory_reference
+        else:
+            directory = self.ref_board
+        file_dialog = QFileDialog( QWidget( self ) )
+        file_dialog.setFileMode( QFileDialog.AnyFile )
+        file_path = file_dialog.getOpenFileName( self, title, directory, "File( *.eo )" )[0]
+        if file_path in [ "", ".", None ]:
+            file_path = None
+        return file_path
+    def Dialog_Save( self, title, name ):
+        # Variabels
+        directory = self.directory_reference
+        if ( self.canvas() is not None ) and ( self.canvas().view() is not None ):
+            file_name = Krita.instance().activeDocument().fileName()
+            directory = os.path.dirname( file_name )
+            basename = os.path.basename( file_name )
+            name = os.path.splitext( basename )[0]
+        directory = os.path.join( directory, f"{ name }.eo")
+        # File Dialog
+        file_dialog = QFileDialog( QWidget( self ) )
+        file_dialog.setFileMode( QFileDialog.AnyFile )
+        file_path = file_dialog.getSaveFileName( self, title, directory, "File( *.eo )" )[0]
+        if file_path in [ "", ".", None ]:
+            file_path = None
+        return file_path
+    def Dialog_Directory( self, title ):
+        file_dialog = QFileDialog( QWidget( self ) )
+        file_dialog.setFileMode( QFileDialog.DirectoryOnly )
+        folder_path = file_dialog.getExistingDirectory( self, title, "" )
+        if folder_path in [ "", ".", None ]:
+            folder_path = None
+        return folder_path
+    # EO file
+    def EO_Load( self, path ):
+        if ( path not in [ "", ".", None ] and os.path.exists( path ) == True ):
+            with open( path, "r", encoding=encode ) as f:
+                board = f.readlines()
+                self.Data_Load( board, path )
+    def EO_Save( self, path ):
+        if path not in [ "", ".", None ]:
+            data = self.Data_Save()
+            with open( path, "w", encoding=encode ) as f:
+                f.write( data )
+    def EO_Export( self, path ):
+        if path not in [ "", ".", None ]:
+            data = self.Data_Export()
+            with open( path, "w", encoding=encode ) as f:
+                f.write( data )
+
+    # Link
+    def Link_KRA( self, boolean ):
+        self.ref_kra = boolean
+        if boolean == False:
+            self.layout.link.setIcon( self.qicon_link_false )
+        if boolean == True:
+            self.layout.link.setIcon( self.qicon_link_true )
+            self.Link_Live()
+        Krita.instance().writeSetting( "Imagine Board", "ref_kra", str( self.ref_kra ) )
+    def Link_Live( self ):
+        if self.ref_kra == True:
+            try:
+                ref_doc = Krita.instance().activeDocument().fileName()
+                if ( self.ref_doc != ref_doc ) or ( self.ref_doc == None ):
+                    self.ref_doc = ref_doc
+                    self.Link_Load()
+            except:
+                pass
+    def Link_Load( self ):
+        if ( self.canvas() is not None ) and ( self.canvas().view() is not None ):
+            doc = Krita.instance().activeDocument()
+            annotation = doc.annotation( "Imagine Board" )
+            decode = bytes( annotation ).decode( encode )
+            board = decode.split( "\n" )
+            self.Data_Load( board, self.ref_board )
+    def Link_Save( self ):
+        if ( self.canvas() is not None ) and ( self.canvas().view() is not None ):
+            data = self.Data_Save()
+            doc = Krita.instance().activeDocument()
+            doc.setAnnotation( 'Imagine Board', "Document", QByteArray( data.encode() ) )
+            doc.save()
+
+    # Data
+    def Data_Load( self, board, ref_board ):
+        # Variables
+        count = len( board )
+        # Progress Bar
+        self.Progress_Value( 0 )
+        self.Progress_Max( count )
+        # Construct Board
+        lista = []
+        ref_zoom = 1
+        ref_position = [ 0.5, 0.5 ]
+        if len( board ) > 0:
+            if board[0].startswith( "Imagine Board" ) == True:
+                for i in range( 1, count ):
+                    try:
+                        # Progress Bar
+                        self.Progress_Value( i )
+                        QApplication.processEvents()
+                        # Formating
+                        line = board[i]
+                        if line.endswith("\n") == True:
+                            line = line[:-1]
+                        # Evaluation
+                        if line == "connect": # Export
+                            self.ref_board = ref_board
+                        elif line.startswith( "ref_position=" ) == True: # Camera Position
+                            n = len( "ref_position=" )
+                            ref_position = eval( line[n:] )
+                        elif line.startswith( "ref_zoom=" ) == True: # Camera Scale
+                            n = len( "ref_zoom=" )
+                            ref_zoom = float( line[n:] )
+                        else: # Pin
+                            line = eval( line )
+                            # QPixmap
+                            path = line["path"]
+                            url = line["web"]
+                            zdata = line["zdata"]
+                            if path != None: # Local
+                                qpixmap = QPixmap( path )
+                                if qpixmap.isNull() == False:
+                                    line["qpixmap"] = qpixmap
+                            elif url != None: # Internet
+                                qpixmap = self.Download_QPixmap( url )
+                                if qpixmap.isNull() == False:
+                                    line["qpixmap"] = qpixmap
+                            elif zdata != None: # Import
+                                qpixmap = QPixmap()
+                                qpixmap.loadFromData( zdata )
+                                if qpixmap.isNull() == False:
+                                    line["qpixmap"] = qpixmap
+                            lista.append( line )
+                    except:
+                        pass
+        if len( lista ) > 0:
+            # Preview & Grid
+            self.list_reference = lista
+            if self.sync_list != "Folder":
+                self.Filter_Search()
+            # Reference
+            self.imagine_reference.Board_Insert( lista )
+            self.imagine_reference.Set_Camera( ref_position, ref_zoom )
         # Progress Bar
         self.Progress_Value( 0 )
         self.Progress_Max( 1 )
-
-        # Update Board
-        if len( self.list_pin_ref ) > 0:
-            self.imagine_reference.Board_Load( self.list_pin_ref )
-    def Board_Save( self, SIGNAL_SAVE ):
-        # Parsing
-        if self.list_pin_ref != SIGNAL_SAVE:
-            self.list_pin_ref = SIGNAL_SAVE
-            self.layout.count_reference.setValue( len( self.list_pin_ref ) )
-
-        # Watcher
-        self.Watcher_Update()
-        # Save
-        Krita.instance().writeSetting( "Imagine Board", "list_pin_ref", str( self.list_pin_ref ) )
-        self.Annotation_Save()
-
-    def Reference_Cache( self, list_reference ):
-        # Clear Previous
-        if self.undocache_index > 0:
-            self.undocache_list = self.undocache_list[self.undocache_index:]
-            self.undocache_index = 0
-        # Update State List
-        self.undocache_list.insert( 0, list_reference )
-        # Crop Excess from List
-        if len( self.undocache_list ) > self.undocache_size:
-            self.undocache_list = self.undocache_list[:self.undocache_size]
-    def Reference_Undo( self ):
-        limit = min( self.undocache_size, len( self.undocache_list ) )
-        self.undocache_index = Limit_Range( self.undocache_index + 1, 0, limit )
-        if ( len( self.undocache_list ) > 0 and self.undocache_index < len( self.undocache_list ) and self.undocache_index < self.undocache_size ):
-            self.Board_Loader( self.undocache_list[self.undocache_index] )
-    def Reference_Redo( self ):
-        limit = min( self.undocache_size, len( self.undocache_list ) )
-        self.undocache_index = Limit_Range( self.undocache_index - 1, 0, limit )
-        if ( len( self.undocache_list ) > 0 and self.undocache_index < len( self.undocache_list ) and self.undocache_index < self.undocache_size ):
-            self.Board_Loader( self.undocache_list[self.undocache_index] )
-
-    #endregion
-    #region Database ###############################################################
-
-    #endregion
-    #region Information ############################################################
-    def Information_Block_Signals( self, boolean ):
-        # Signals
-        self.dialog.info_title.blockSignals( boolean )
-        self.dialog.info_abstract.blockSignals( boolean )
-        self.dialog.info_keyword.blockSignals( boolean )
-        self.dialog.info_subject.blockSignals( boolean )
-        self.dialog.info_license.blockSignals( boolean )
-        self.dialog.info_language.blockSignals( boolean )
-        self.dialog.info_description.blockSignals( boolean )
-    def Information_Read( self ):
-        # Block Signals
-        self.Information_Block_Signals( True )
-        # Variables
-        file_name = ""
-        file_version = ""
-        self.info = {
-            'title': "",
-            'abstract': "",
-            'keyword': "",
-            'subject': "",
-            'license': "",
-            'language': "",
-            'description': "",
-
-            'date': "",
-            'creation-date': "",
-            'editing-cycles': "",
-            'editing-time': "",
-
-            'initial-creator': "",
-            'full-name': "",
-            'creator-first-name': "",
-            'creator-last-name': "",
-            'initial': "",
-            'author-title': "",
-            'position': "",
-            'company': "",
-            }
-        t_editing_cycles = ""
-        t_editing_time = ""
-        d_date = ""
-        d_creation_date = ""
-        delta_creation = ""
-        creator_fl_name = ""
-        self.contact = []
-
-
-        # Active Document is Open
-        if ( ( self.canvas() is not None ) and ( self.canvas().view() is not None ) ):
-            # XML from active document
-            try:
-                # Active Document
-                ki = Krita.instance()
-                ad = ki.activeDocument()
-                text = ad.documentInfo()
-                ET = xml.etree.ElementTree
-                root = ET.fromstring( text )
-                for r in root:
-                    for i in r:
-                        # build xml
-                        index = i.tag.split( '}' )[1]
-                        entry = i.text
-                        if ( entry == "" or entry == None ):
-                            entry = ""
-                        self.info[index] = entry
-                        # build contacts
-                        if index == "contact":
-                            self.contact.append( entry )
-
-                # Calculations
-                path = ad.fileName()
-                file_name = str( os.path.basename( path ) )
-                d_date = self.display_date( self.info["date"] )
-                d_creation_date = self.display_date( self.info["creation-date"] )
-                t_editing_cycles = self.time_to_string( self.cycles_to_time( self.info["editing-cycles"] ) )
-                t_editing_time = self.time_to_string( self.cycles_to_time( self.info["editing-time"] ) )
-                if d_creation_date != "":
-                    delta_creation = self.time_delta( 
-                        int( d_creation_date[0:4] ),
-                        int( d_creation_date[5:7] ),
-                        int( d_creation_date[8:10] ),
-                        int( d_creation_date[11:13] ),
-                        int( d_creation_date[14:16] ),
-                        int( d_creation_date[17:19] ),
-                        int( d_date[0:4] ),
-                        int( d_date[5:7] ),
-                        int( d_date[8:10] ),
-                        int( d_date[11:13] ),
-                        int( d_date[14:16] ),
-                        int( d_date[17:19] ),
-                        )
-                creator_fl_name = self.info["creator-first-name"] + " " + self.info["creator-last-name"]
-
-                # Costs ( Edit time avoids idle inflation cost )
-                self.Money_Cost( self.cycle_to_hour( self.info["editing-time"] ) )
-            except:
-                self.Money_Rate( 0 )
-
-            # Krita Version from KRA file save
-            try:
-                target = "maindoc.xml"
-                if zipfile.is_zipfile( path ):
-                    archive = zipfile.ZipFile( path, "r" )
-                    archive_open = archive.open( target )
-                    archive_read = archive_open.read()
-                    decode = archive_read.decode( "ascii" )
-                    splits = decode.split()
-                    for i in range( len( splits ) ):
-                        index = splits[i]
-                        header = "kritaVersion="
-                        if index.startswith( header ):
-                            numbers = index.replace( header, "" )
-                            break
-                    numbers = numbers[1:-1]
-                    file_version = str( numbers )
-            except:
-                pass
-        else:
-            self.Money_Rate( 0 )
-
-
-        # Document
-        self.dialog.docname_string.setText( file_name )
-        self.dialog.docversion_string.setText( file_version )
+    def Data_Save( self ):
         # Header
-        self.dialog.info_title.setText( self.info["title"] )
-        self.dialog.info_abstract.setText( self.info["abstract"] ) # Description is Abstract inside Krita
-        self.dialog.info_keyword.setText( self.info["keyword"] )
-        self.dialog.info_subject.setText( self.info["subject"] )
-        self.dialog.info_license.setText( self.info["license"] )
-        self.dialog.info_language.setText( self.info["language"] )
-        self.dialog.info_description.setText( self.info["description"] ) # Abstract is Description inside Krita
-        # Time
-        self.dialog.info_date.setText( d_date )
-        self.dialog.info_creation.setText( d_creation_date + delta_creation )
-        self.dialog.info_edit_cycles.setText( str( self.info["editing-cycles"] ) + str( t_editing_cycles ) )
-        self.dialog.info_edit_time.setText( str( self.info["editing-time"] ) + str( t_editing_time ) )
-        # Author
-        self.dialog.info_creator.setText( self.info["initial-creator"] )
-        self.dialog.info_nick_name.setText( self.info["full-name"] )
-        self.dialog.info_full_name.setText( creator_fl_name )
-        self.dialog.info_initials.setText( self.info["initial"] )
-        self.dialog.info_author_title.setText( self.info["author-title"] )
-        self.dialog.info_position.setText( self.info["position"] )
-        self.dialog.info_company.setText( self.info["company"] )
-        self.dialog.info_contact.clear()
-        for i in range( 0, len( self.contact ) ):
-            self.dialog.info_contact.addItem( str( self.contact[i] ) )
+        data = "Imagine Board"
+        # Type of save
+        data += f"\nconnect"
+        # Camera
+        data += f"\nref_position={ self.ref_position }"
+        data += f"\nref_zoom={ self.ref_zoom }"
+        for item in self.list_reference:
+            # Clean
+            item["qpixmap"] = None
+            item["draw"] = None
+            item["zdata"] = None
+            # String
+            data += f"\n{ item }"
+        return data
+    def Data_Export( self ):
+        # Header
+        data = "Imagine Board"
+        # Type of save
+        data += f"\ndata"
+        # Camera
+        data += f"\nref_position={ self.ref_position }"
+        data += f"\nref_zoom={ self.ref_zoom }"
+        for item in self.list_reference:
+            # ZData
+            path = item["path"]
+            web = item["web"]
+            if path != None:
+                item["zdata"] = self.Bytes_Python( path )
+            elif web != None:
+                item["zdata"] = self.Download_Data( web )
+            else:
+                item["zdata"] = None
+            # Clean
+            item["qpixmap"] = None
+            item["draw"] = None
+            # String
+            data += f"\n{ item }"
+        return data
+    def Data_Kritarc( self ):
+        self.imagine_reference.Set_File_Path( self.ref_board )
+        Krita.instance().writeSetting( "Imagine Board", "ref_board", str( self.ref_board ) )
 
-        # Block Signals
-        self.Information_Block_Signals( False )
-    def Information_Save( self ):
-        # Active Document is Open
-        if ( ( self.canvas() is not None ) and ( self.canvas().view() is not None ) ):
-            new_title = str( self.dialog.info_title.text() )
-            new_abstract = str( self.dialog.info_abstract.toPlainText() ) # Abstract is Description inside Krita
-            new_keyword = str( self.dialog.info_keyword.text() )
-            new_subject = str( self.dialog.info_subject.text() )
-            new_license = str( self.dialog.info_license.text() )
-            new_language = str( self.dialog.info_language.text() )
-            new_description = str( self.dialog.info_description.text() )  # Description is Abstract inside Krita
-
-            contacts = ""
-            for i in range( 0, len( self.contact ) ):
-                contacts += "<contact>"+self.contact[i]+"</contact>\n"
-
-            # Save string to Active Document
-            info_string = """<?xml version="1.0" encoding="UTF-8"?>
-                <!DOCTYPE document-info PUBLIC '-//KDE//DTD document-info 1.1//EN' 'http://www.calligra.org/DTD/document-info-1.1.dtd'>
-                <document-info xmlns="http://www.calligra.org/DTD/document-info">
-                 <about>
-                  <title>""" + new_title + """</title>
-                  <description>""" + new_description + """</description>
-                  <subject>""" + new_subject + """</subject>
-                  <abstract><![CDATA[""" + new_abstract + """]]></abstract>
-                  <keyword>""" + new_keyword + """</keyword>
-                  <initial-creator>""" + self.info["initial-creator"] + """</initial-creator>
-                  <language>""" + new_language + """</language>
-                  <license>""" + new_license + """</license>
-                 </about>
-                 <author>
-                  <full-name>""" + self.info["full-name"] + """</full-name>
-                  <creator-first-name>""" + self.info["creator-first-name"] + """</creator-first-name>
-                  <creator-last-name>""" + self.info["creator-last-name"] + """</creator-last-name>
-                  <initial>""" + self.info["initial"] + """</initial>
-                  <author-title>""" + self.info["author-title"] + """</author-title>
-                  <position>""" + self.info["position"] + """</position>
-                  <company>""" + self.info["company"] + """</company>
-                  """ + contacts + """
-                 </author>
-                </document-info>"""
-            text = Krita.instance().activeDocument().setDocumentInfo( info_string )
-
-            # Reconstruct Items
-            self.dialog.info_contact.clear()
-            for i in range( 0, len( self.contact ) ):
-                self.dialog.info_contact.addItem( str( self.contact[i] ) )
-    def Information_Copy( self, item ):
-        contact = item.text()
-        if contact != "":
-            QApplication.clipboard().setText( contact )
-
-    def cycles_to_time( self, cycles ):
-        # Variables
-        year = 0
-        month = 0
-        day = 0
-        hour = 0
-        minute = 0
-        second = 0
-        # Checks
-        if ( cycles != "" and cycles != 0 and cycles != None ):
-            cycles = int( cycles )
-            while cycles >= sec_ano:
-                year += 1
-                cycles -= sec_ano
-            while cycles >= sec_mes:
-                month += 1
-                cycles -= sec_mes
-            while cycles >= sec_dia:
-                day += 1
-                cycles -= sec_dia
-            while cycles >= sec_hora:
-                hour += 1
-                cycles -= sec_hora
-            while cycles >= sec_minuto:
-                minute += 1
-                cycles -= sec_minuto
-            second = int( cycles )
-        # Return
-        time = [year, month, day, hour, minute, second]
-        return time
-    def time_to_string( self, time ):
-        # Variables
-        ano = time[0]
-        mes = time[1]
-        dia = time[2]
-        hor = time[3]
-        min = time[4]
-        seg = time[5]
-        # string constants
-        suffix = ""
-        seconds = ""
-        minutes = ""
-        hours = ""
-        days = ""
-        months = ""
-        years = ""
-        # strings
-        if ( ano>0 or mes>0 or dia>0 or hor>0 or min>0 or seg>0 ):
-            suffix = " >> "
-        if ano > 0:
-            years = str( ano ).zfill( 1 ) + "Y "
-        if mes > 0:
-            months = str( mes ).zfill( 2 ) + "M "
-        if dia > 0:
-            days = str( dia ).zfill( 2 ) + "D "
-        if hor > 0:
-            hours = str( hor ).zfill( 2 ) + "h "
-        if min > 0:
-            minutes = str( min ).zfill( 2 ) + "m "
-        if seg > 0:
-            seconds = str( seg ).zfill( 2 ) + "s"
-        # string missing
-        if ( mes==0 and ano>0 ):
-            months = "00M "
-        if ( dia==0 and ( ano>0 or mes>0 ) ):
-            days = "00D "
-        if ( hor==0 and ( ano>0 or mes>0 or dia>0 ) ):
-            hours = "00h "
-        if ( min==0 and ( ano>0 or mes>0 or dia>0 or hor>0 ) ):
-            minutes = "00m "
-        if ( seg==0 and ( ano>0 or mes>0 or dia>0 or hor>0 or seg>0 ) ):
-            seconds = "00s"
-        # return
-        string = suffix + years + months + days + hours + minutes + seconds
-        return string
-    def display_date( self, date ):
-        if ( date != "" and date != None ):
-            ano = date[0:4]
-            mes = date[5:7]
-            dia = date[8:10]
-            hor = date[11:13]
-            min = date[14:16]
-            seg = date[17:19]
-            string = ano + "-" + mes + "-" + dia + " " + hor + ":" + min + ":" + seg
+    # Label Operations
+    def Reference_Label( self, boolean ):
+        if boolean == True:
+            value = qt_max
         else:
-            string = ""
-        return string
-    def time_delta( self, year1, month1, day1, hour1, minute1, second1, year2, month2, day2, hour2, minute2, second2 ):
-        date_start = datetime.datetime( year1, month1, day1, hour1, minute1, second1 )
-        date_now = datetime.datetime( year2, month2, day2, hour2, minute2, second2 )
-        delta = ( date_now - date_start )
-        string = self.time_to_string( self.cycles_to_time( ( delta.days * 86400 ) + delta.seconds ) )
-        return string
+            value = 0
+        self.layout.label_panel.setMaximumHeight( value )
+    def LabelPanel_Shrink( self ):
+        self.layout.label_panel.setMaximumHeight( 0 )
+    def Reference_Information( self, info ):
+        # Variables
+        info_text = info["text"]
+        info_font = info["font"]
+        info_letter = info["letter"]
+        info_pen = info["pen"]
+        info_bg = info["bg"]
+        # Signals
+        self.layout.label_font.blockSignals( True )
+        self.layout.label_letter.blockSignals( True )
+        self.layout.label_pen.blockSignals( True )
+        self.layout.label_bg.blockSignals( True )
+        # ToolTip
+        self.layout.label_font.setCurrentText( info_font )
+        self.layout.label_letter.setValue( info_letter )
+        self.layout.label_pen.setToolTip( info_pen )
+        self.layout.label_bg.setToolTip( info_bg )
+        # Modules
+        self.block_pen.Set_Color( QColor( info_pen ) )
+        self.block_bg.Set_Color( QColor( info_bg ) )
+        # Signals
+        self.layout.label_font.blockSignals( False )
+        self.layout.label_letter.blockSignals( False )
+        self.layout.label_pen.blockSignals( False )
+        self.layout.label_bg.blockSignals( False )
+    def Label_Text( self ):
+        previous = self.imagine_reference.Get_Label_Infomation()
+        if previous != None:
+            string, ok = QInputDialog.getMultiLineText( self, "Imagine Board", "Input Text", previous["text"] )
+            if ( ok == True and string != None ):
+                self.imagine_reference.Set_Label_Text( string )
+    def Label_Font( self, font ):
+        self.imagine_reference.Set_Label_Font( font )
+    def Label_Letter( self, letter ):
+        self.imagine_reference.Set_Label_Letter( letter )
 
-    def cycle_to_hour( self, cycles ):
+    # Packer
+    def Reference_Pack_Stop( self, boolean ):
+        if boolean == True:
+            self.layout.stop.setIcon( self.qicon_stop_abort )
+        elif boolean == False:
+            self.layout.stop.setIcon( self.qicon_stop_idle )
+    def Reference_Stop_Cycle( self ):
+        self.imagine_reference.Set_Stop_Cycle()
+
+    # Camera
+    def Reference_Camera( self, ref_position, ref_zoom, len_board ):
         # Variables
-        hour = 0
-        # Checks
-        if ( cycles != "" and cycles != 0 and cycles != None ):
-            cycles = int( cycles )
-            while cycles >= sec_hora:
-                hour += 1
-                cycles -= sec_hora
-            resto = cycles / sec_hora
-            work_hours = hour + resto
-        else:
-            work_hours = 0
-        return work_hours
-    def Money_Cost( self, work_hours ):
-        # Variables
-        self.work_hours = work_hours
-        rate = self.dialog.menu_money_rate.value()
-        # Calculations
-        total = rate * self.work_hours
-        # Signals
-        self.Money_Block_Signals( True )
-        self.dialog.menu_money_total.setValue( total )
-        self.Money_Block_Signals( False )
-    def Money_Rate( self, rate ):
-        total = rate * self.work_hours
-        # Signals
-        self.Money_Block_Signals( True )
-        self.dialog.menu_money_total.setValue( total )
-        self.Money_Block_Signals( False )
-    def Money_Total( self, total ):
-        if self.work_hours > 0:
-            rate = total / self.work_hours
-        else:
-            rate = 0
-        # Signals
-        self.Money_Block_Signals( True )
-        self.dialog.menu_money_rate.setValue( rate )
-        self.Money_Block_Signals( False )
-    def Money_Block_Signals( self, boolean ):
-        self.dialog.menu_money_rate.blockSignals( boolean )
-        self.dialog.menu_money_total.blockSignals( boolean )
+        self.ref_position = ref_position
+        self.ref_zoom = ref_zoom
+        # Interface
+        self.layout.zoom.setText( f"z{ ref_zoom }:{ len_board }" )
+        # Save
+        Krita.instance().writeSetting( "Imagine Board", "ref_position", str( self.ref_position ) )
+        Krita.instance().writeSetting( "Imagine Board", "ref_zoom", str( self.ref_zoom ) )
 
     #endregion
-    #region Function ( Key Enter ) ###################################################
-    def Function_Enabled( self, boolean ):
-        # Source
-        self.dialog.source_drop_panel.setEnabled( boolean )
-        self.dialog.source_path_text.setEnabled( boolean )
-        self.dialog.source_path_run.setEnabled( boolean )
-        # Operation
-        self.dialog.function_operation.setEnabled( boolean )
-        self.dialog.function_string_add.setEnabled( boolean )
-        self.dialog.function_string_clear.setEnabled( boolean )
-        self.dialog.function_list.setEnabled( boolean )
-        self.dialog.function_number.setEnabled( boolean )
-        self.dialog.function_destination.setEnabled( boolean )
-    def Function_Operation( self ):
+    #region Color Picker ###########################################################
+
+    def Block_Pen( self, qcolor ):
+        self.picker_pen = qcolor
+        self.picker_cancel = qcolor
+        self.Picker_Show( qcolor, "PEN" )
+    def Block_Bg( self, qcolor ):
+        self.picker_bg = qcolor
+        self.picker_cancel = qcolor
+        self.Picker_Show( qcolor, "BG" )
+    def Picker_Show( self, qcolor, mode ):
+        if self.picker.isVisible() == False:
+            # Variabels
+            self.picker_mode = mode
+            # Interface
+            self.Picker_Geometry()
+            self.picker.show()
+            # Modules
+            self.color_hue.Set_Color( qcolor )
+            self.color_hsv.Set_Color( qcolor )
+            self.picker.hex_code.setText( qcolor.name() )
+        else:
+            self.picker_mode = None
+            self.picker.close()
+
+    def Picker_Geometry( self ):
+        # Read
+        label = self.layout.label_panel.geometry()
+        panel = self.picker.geometry()
         # Variables
-        input_string = ["key_add", "key_replace", "key_remove", "rename_order", "rename_age", "rename_random", "save_order"]
-        input_number = ["rename_order", "rename_age", "save_order"]
-        input_destination = ["save_original", "save_order"]
-
-        # Read
-        operation = self.dialog.function_operation.currentText()
-        items = self.List_Selected()
-        number = self.dialog.function_number.value()
-        destination = self.dialog.function_destination.text()
-
-        # Strings
-        string = "[ "
-        for i in range( 0, len( items ) ):
-            string += items[i] + " "
-        string += "]"
-        # Destination
-        destination = os.path.normpath( destination )
-        basename = os.path.basename( destination )
-        exists = os.path.exists( destination )
-        is_dir = os.path.isdir( destination )
-
-        # Display
-        if operation == ">>":
-            text = "Search"
-            context = ""
-        else:
-            # Text
-            text = operation.replace( "_", " " ).upper()
-            # Context
-            context = text
-
-            if operation in input_string:
-                context += " s=" + str( string )
-            if operation in input_number:
-                context += " n=" + str( number )
-            if ( operation in input_destination and exists == True and is_dir == True ):
-                context += " d=" + str( basename )
-
-        # Display Placeholder Text
-        self.layout.search.setPlaceholderText( text )
-        # Modules
-        self.imagine_preview.Set_Operation( context )
-        self.imagine_grid.Set_Operation( context )
-    def Function_Panel( self, boolean ):
-        self.function_panel = boolean
-        # Save
-        Krita.instance().writeSetting( "Imagine Board", "function_panel", str( self.function_panel ) )
- 
-    def Function_String_Add( self ):
-        # Items
-        string = self.dialog.function_string_add.text().lower().replace( " ", "_" )
-        if string != "":
-            self.dialog.function_string_add.setText( "" )
-            self.dialog.function_list.addItem( string )
-        # Save
-        self.List_Save()
-    def Function_String_Clear( self ):
-        # Items
-        self.dialog.function_string_add.clear()
-        remove = self.dialog.function_list.selectedItems()
-        count_rem = len( remove )
-        if count_rem > 0:
-            for r in range( 0, count_rem ):
-                count_itm = self.dialog.function_list.count()
-                for i in range( 0, count_itm ):
-                    if self.dialog.function_list.item( i ) == remove[r]:
-                        self.dialog.function_list.takeItem( i )
-                        break
-        # Save
-        self.List_Save()
-    def List_Save( self ):
-        keywords = ""
-        for k in range( 0, self.dialog.function_list.count() ):
-            keywords += self.dialog.function_list.item( k ).text()+","
-        Krita.instance().writeSetting( "Imagine Board", "function_string", str( keywords ) )
-    def List_Selected( self ):
-        selection = self.dialog.function_list.selectedItems()
-        sel_sort = []
-        for i in range( 0, len( selection ) ):
-            sel_sort.append( str( selection[i].text() ) )
-        sel_sort.sort()
-        return sel_sort
-
-    def Function_Save_Type( self, function_type ):
-        self.function_type = function_type
-        Krita.instance().writeSetting( "Imagine Board", "function_type", str( self.function_type ) )
-    def Function_Save_Value( self, function_value ):
-        self.function_value = function_value
-        Krita.instance().writeSetting( "Imagine Board", "function_value", str( self.function_value ) )
-    def Function_Save_Format( self, function_format ):
-        self.function_format = function_format
-        Krita.instance().writeSetting( "Imagine Board", "function_format", str( self.function_format ) )
-
-    def Function_Source_Panel_PG( self, SIGNAL_DROPIN ):
-        if self.function_panel == True:
-            self.ThreadFunction_Run( SIGNAL_DROPIN )
-        else:
-            self.Folder_Drop( SIGNAL_DROPIN[0] )
-    def Function_Source_Panel_R( self, SIGNAL_DROPIN ):
-        if self.function_panel == True:
-            lista = []
-            for i in range( 0, len( SIGNAL_DROPIN ) ):
-                lista.append( SIGNAL_DROPIN["path"] )
-            self.ThreadFunction_Run( lista )
-        else:
-            self.Reference_Insert( SIGNAL_DROPIN )
-
-    def Function_Source_Path_Text( self, text ):
-        path = self.Clean_Dot( os.path.normpath( text ) )
-        exists = os.path.exists( path )
-        if ( len( path ) > 0 and exists == True ):
-            self.dialog.source_path_run.setEnabled( True )
-        else:
-            self.dialog.source_path_run.setEnabled( False )
-    def Function_Source_Path_Run( self ):
-        text = self.dialog.source_path_text.text()
-        path = self.Clean_Dot( os.path.normpath( text ) )
-        self.ThreadFunction_Run( [path] )
-
-    def ThreadFunction_Run( self, SIGNAL_PATH ):
-        # Read
-        operation = self.dialog.function_operation.currentText()
-        string = self.List_Selected()
-        number = self.dialog.function_number.value()
-        destination = self.Clean_Dot( self.dialog.function_destination.text() )
-
-        # Path List
-        path_list = []
-        for i in range( 0, len( SIGNAL_PATH ) ):
-            item = os.path.normpath( SIGNAL_PATH[i] )
-            path_list.append( item )
-
-        # Destination
-        if destination == "":
-            if self.directory_path != "":
-                destination = self.directory_path
-            else:
-                destination = ""
-        else:
-            exists = os.path.exists( destination )
-            QtCore.qDebug( "exists = " + str( exists ) )
-            if exists == False:
-                destination = ""
-                QMessageBox.information( QWidget(), i18n( "Warnning" ), i18n( "Destination path is invalid\nDefault path is display Directory" ) )
-
-        # Sort Files and Folders
-        if ( len( path_list ) > 0 and destination != "" ):
-            # File Watcher
-            self.Watcher_State( False )
-            self.Function_Enabled( False )
-            # Thread
-            self.thread_function.Variables_Run( operation, string, number, path_list, destination, file_normal )
-            if thread_function == True:self.thread_function.start()
-            else:self.thread_function.run()
-        else:
-            self.Clean_ImageHost( path_list )
-
-    def ThreadFunction_PBAR_Value( self, SIGNAL_PBAR_VALUE ):
-        self.dialog.function_progress.setValue( SIGNAL_PBAR_VALUE )
-    def ThreadFunction_PBAR_Max( self, SIGNAL_PBAR_MAX ):
-        self.dialog.function_progress.setMaximum( SIGNAL_PBAR_MAX )
-    def ThreadFunction_String( self, SIGNAL_STRING ):
-        self.dialog.function_text.setText( SIGNAL_STRING )
-    def ThreadFunction_Number( self, SIGNAL_NUMBER ):
-        self.dialog.function_number.setValue( SIGNAL_NUMBER )
-    def ThreadFunction_Reset( self, SIGNAL_RESET ):
-        # UI
-        self.dialog.function_progress.setValue( 0 )
-        # Thread
-        if thread_function == True:
-            self.thread_function.quit()
+        ly = label.y()
+        lw = label.width()
+        pw = panel.width()
+        ph = panel.height()
+        # Calculations
+        gx = lw * 0.5 - pw * 0.5
+        gy = ly - ph - 10
         # Update
-        self.Watcher_State( True )
-        self.Function_Enabled( True )
-        self.Filter_Keywords( False )
-        # Folder
-        self.Clean_ImageHost( SIGNAL_RESET )
-    def ThreadFunction_Item( self, SIGNAL_ITEM ):
+        self.picker.setGeometry( int( gx ), int( gy ), int( pw ), int( ph ) )
+    def Picker_Cancel( self ):
+        # Interface
+        self.picker.close()
+        # Modules
+        if self.picker_mode == "PEN":
+            self.picker_pen = self.picker_cancel
+            self.block_pen.Set_Color( self.picker_cancel )
+        if self.picker_mode == "BG":
+            self.picker_bg = self.picker_cancel
+            self.block_bg.Set_Color( self.picker_cancel )
+        hex_code = self.picker_cancel.name()
+        self.picker.hex_code.setText( hex_code )
+        # Apply
+        self.Picker_Apply( hex_code )
         # Variables
-        list_count = self.dialog.function_list.count()
-        # Create a Set
-        keys_s = set()
-        for i in range( 0, list_count ):
-            keys_s.add( self.dialog.function_list.item( i ).text() )
-        keys_s.add( SIGNAL_ITEM )
-        # Clear List
-        self.dialog.function_list.clear()
-        # Repopulate List
-        keys_l = list( keys_s )
-        keys_l.sort()
-        for i in range( 0, len( keys_l ) ):
-            self.dialog.function_list.addItem( keys_l[i] )
-        # Save
-        self.List_Save()
-    def ThreadFunction_NewPath( self, SIGNAL_NEWPATH ):
-        # Paths
-        path_old = str( SIGNAL_NEWPATH["old"] )
-        path_new = str( SIGNAL_NEWPATH["new"] )
-        # Change References
-        for i in range( 0, len( self.list_pin_ref ) ):
-            if self.list_pin_ref[i]["path"] == path_old:
-                self.list_pin_ref[i]["path"] = path_new
-                self.imagine_reference.Pin_Replace( i, path_new )
+        self.picker_mode = None
 
-    def Clean_ImageHost( self, path_list ):
-        for i in range( len( path_list ) ):
-            try:
-                path_i = os.path.normpath( path_list[i] )
-                check = path_i.startswith( self.image_path )
-                if check == True:
-                    os.remove( os.path.normpath( path_list[i] ) )
-            except:
-                pass
+    def Picker_HSV_1( self, qcolor ):
+        # Variables
+        if self.picker_mode == "PEN":
+            self.picker_pen = qcolor
+        if self.picker_mode == "BG":
+            self.picker_bg = qcolor
+        hex_code = qcolor.name()
+        # Modules
+        self.color_hsv.Set_Color( qcolor )
+        self.picker.hex_code.setText( hex_code )
+        # Apply
+        self.Picker_Apply( hex_code )
+    def Picker_HSV_23( self, qcolor ):
+        # Variables
+        if self.picker_mode == "PEN":
+            self.picker_pen = qcolor
+        if self.picker_mode == "BG":
+            self.picker_bg = qcolor
+        hex_code = qcolor.name()
+        # Modules
+        self.color_hue.Set_Color( qcolor )
+        self.picker.hex_code.setText( hex_code )
+        # Apply
+        self.Picker_Apply( hex_code )
+
+    def Picker_HEX( self ):
+        hex_code = self.picker.hex_code.text()
+        qcolor = QColor( hex_code )
+        if self.picker_mode == "PEN":
+            self.picker_pen = qcolor
+            self.block_pen.Set_Color( qcolor )
+        if self.picker_mode == "BG":
+            self.picker_bg = qcolor
+            self.block_bg.Set_Color( qcolor )
+        self.picker.hex_code.setText( hex_code )
+        # Apply
+        self.Picker_Apply( hex_code )
+    def Picker_Ok( self ):
+        if self.picker_mode == "PEN":
+            self.picker_cancel = self.picker_pen
+        if self.picker_mode == "BG":
+            self.picker_cancel = self.picker_bg
+
+    def Picker_Apply( self, hex_code ):
+        if self.picker_mode == "PEN":
+            self.layout.label_pen.setToolTip( hex_code )
+            self.imagine_reference.Set_Label_Pen( hex_code )
+        if self.picker_mode == "BG":
+            self.layout.label_bg.setToolTip( hex_code )
+            self.imagine_reference.Set_Label_Bg( hex_code )
+
+    #endregion
+    #region Function>> #############################################################
+
+    def Function_Module( self ):
+        # Variables
+        string = self.function_operation
+        if string == "NONE":
+            string = ""
+        # Modules
+        self.imagine_preview.Set_Function( self.function_panel_drop, string )
+        self.imagine_grid.Set_Function( self.function_panel_drop, string )
+        self.imagine_reference.Set_Function( self.function_panel_drop, string )
+
+    def Function_Path( self ):
+        # Read
+        source = self.dialog.function_path_source.text()
+        destination = self.dialog.function_path_destination.text()
+        # Exists
+        exist_source = os.path.exists( source )
+        exist_destination = os.path.exists( destination )
+        # Logic
+        if exist_source == True:self.function_path_source = source
+        else:self.function_path_source = None
+        if exist_destination == True:self.function_path_destination = destination
+        else:self.function_path_destination = None
+        # UI
+        if ( exist_source == True and ( exist_destination == True or destination == "" ) ):
+            self.dialog.function_run.setEnabled( True )
+            self.dialog.function_run.setIcon( self.qicon_function_run )
+        else:
+            self.dialog.function_run.setEnabled( False )
+            self.dialog.function_run.setIcon( self.qicon_function_disable )
+    def Function_Run( self ):
+        # Variable
+        file_list = []
+        # Checks
+        check_dir = os.path.isdir( self.function_path_source )
+        check_file = os.path.isfile( self.function_path_source )
+        # Logic
+        if check_dir == True:
+            # Search Directory
+            qdir = QDir( self.function_path_source )
+            qdir.setSorting( self.file_sort )
+            qdir.setFilter( QDir.Files | QDir.NoSymLinks | QDir.NoDotAndDotDot )
+            qdir.setNameFilters( self.file_extension )
+            files = qdir.entryInfoList()
+            # List Path
+            for item in files:
+                file_list.append( item.filePath() )
+        if check_file == True:
+            file_list.append( self.function_path_source )
+        # Process
+        if len( file_list ) > 0:
+            self.Function_Process( file_list )
+
+    def Function_Panel_Drop( self, boolean ):
+        self.function_panel_drop = boolean
+        self.Function_Module()
+        Krita.instance().writeSetting( "Imagine Board", "function_panel_drop", str( self.function_panel_drop ) )
+    def Function_Operation( self, operation ):
+        # Variables
+        self.function_operation = operation
+        # Modules
+        self.Function_Module()
+        # Requirements
+        request = ""
+        if ( "ORIGINAL" not in operation and "CLEAN" not in operation ):
+            if operation.startswith( ( "KEY", "RENAME", "SAVE" ) ) == True:
+                request += "S"
+            if "ORDER" in operation:
+                request += " N"
+        if "PYTHON" in operation:
+            request += "PY"
+        self.dialog.function_menu.setText( request )
+    def Function_Number( self, number ):
+        self.function_number = number
+
+    def Function_String_Context( self, event ):
+        qmenu = QMenu( self )
+        action_clear = qmenu.addAction( "Clear Selection" )
+        action = qmenu.exec_( self.dialog.function_keyword.mapToGlobal( event.pos() ) )
+        if action == action_clear:
+            self.Function_String_Clear()
+    def Function_String_Add( self ):
+        # String Widget
+        item = self.dialog.function_string.text().lower().replace( " ", "_" )
+        self.dialog.function_string.clear()
+        # Keyword Widget
+        self.dialog.function_keyword.addItem( item )
+        # Variable
+        self.Function_String_List()
+    def Function_String_Clear( self ):
+        # String Widget
+        self.dialog.function_string.clear()
+        # Keyword Widget
+        remove_list = self.dialog.function_keyword.selectedItems()
+        for rem in remove_list:
+            count = self.dialog.function_keyword.count()
+            for i in range( 0, count ):
+                if self.dialog.function_keyword.item( i ) == rem:
+                    self.dialog.function_keyword.takeItem( i )
+                    break
+        # Variable
+        self.Function_String_List()
+    def Function_String_List( self ):
+        # Selected Items
+        self.function_keyword = []
+        keyword_list = self.dialog.function_keyword.selectedItems()
+        for keyword in keyword_list:
+            self.function_keyword.append( keyword.text() )
+        # All Items
+        self.function_string = []
+        count = self.dialog.function_keyword.count()
+        for i in range( 0, count ):
+            string = self.dialog.function_keyword.item( i ).text()
+            self.function_string.append( string )
+        Krita.instance().writeSetting( "Imagine Board", "function_string", str( self.function_string ) )
+
+    def Function_Python_Code( self, index ):
+        # Variables
+        self.function_python_index = index
+        # Editor
+        py_path = self.function_python_path[index]
+        self.Python_Read( py_path )
+    def Python_Read( self, py_path ):
+        self.dialog.function_python_script.clear()
+        with open( py_path, encoding=encode ) as f:
+            read_data = f.read()
+            self.dialog.function_python_script.setPlainText( read_data )
+            self.function_python_script = read_data
+    def Function_Python_Editor( self ):
+        self.function_python_script = self.dialog.function_python_script.toPlainText()
+
+    def Function_Process( self, file_list ):
+        # Run Process
+        if ( len( file_list ) > 0 and self.function_operation != "NONE" ):
+            thread = True
+            if thread == False:self.Function_Single_Start( file_list )
+            if thread == True:self.Function_Thread_Start( file_list )
+    def Function_Single_Start( self, file_list ):
+        self.worker_function = Worker_Function()
+        self.worker_function.run(
+            self,
+            "SINGLE",
+            self.function_path_source,
+            self.function_path_destination,
+            file_list,
+            self.function_operation,
+            self.function_number,
+            self.function_keyword,
+            self.function_python_script,
+            )
+    def Function_Thread_Start( self, file_list ):
+        # Thread
+        self.thread_function = QThread()
+        # Worker
+        self.worker_function = Worker_Function()
+        self.worker_function.moveToThread( self.thread_function )
+        # Thread
+        self.thread_function.started.connect( lambda : self.worker_function.run(
+            self,
+            "THREAD",
+            self.function_path_source,
+            self.function_path_destination,
+            file_list,
+            self.function_operation,
+            self.function_number,
+            self.function_keyword,
+            self.function_python_script,
+            ) )
+        self.thread_function.start()
+    def Function_Thread_Quit( self ):
+        self.thread_function.quit()
+        self.update()
 
     #endregion
     #region Watcher ################################################################
+
     def Watcher_Display( self ):
         try:
-            self.preview_path = self.found_path[self.preview_index]
-            self.Filter_Keywords( False )
-            self.Search_Previous( self.preview_path )
-        except:
-            self.Filter_Keywords( True )
-        self.imagine_reference.Board_Rebase()
+            image_path = self.file_path[ self.preview_index ]
+            self.Filter_Keywords( self.search, image_path )
+        except Exception as e:
+            self.Filter_Search()
+
     def Watcher_State( self, boolean ):
-        # Blocks Imagine Board from updating to changes to the Directory
-        if boolean == True: # Start
-            try:self.Watcher_Add()
-            except:pass
+        # Blocks Imagine Board from updating to changes to the Directory while Function>> works
         if boolean == False: # Stop
-            try:self.Watcher_Remove()
-            except:pass
+            self.Watcher_Remove()
+        if boolean == True: # Start
+            self.Watcher_Add()
     def Watcher_Update( self ):
         self.Watcher_Remove()
         self.Watcher_Add()
@@ -3116,194 +2664,39 @@ class ImagineBoard_Docker( DockWidget ):
         # Variables
         path_list = []
 
-        # Add Directory Path
-        dir_p = self.directory_path
-        if dir_p != "":
-            path_list.append( dir_p )
+        # Add Folder Path
+        folder = self.folder_path
+        if folder != "":
+            path_list.append( folder )
+
         # Add Recent Documents
-        if self.list_active == "Recent Documents":
-            for d in range( 0, len( self.list_recentdocument ) ):
-                path_d = os.path.normpath( self.list_recentdocument[d] )
-                dir_d = os.path.dirname( path_d )
-                if ( dir_d != dir_p and path_d not in path_list ):
-                    path_list.append( path_d )
-        # Add References
-        for r in range( 0, len( self.list_pin_ref ) ):
-            path_r = self.list_pin_ref[r]["path"]
-            text_r = self.list_pin_ref[r]["text"]
-            if ( path_r != None and text_r == None ):
-                dir_r = os.path.dirname( path_r )
-                if ( dir_r != dir_p and path_r not in path_list ):
-                    path_list.append( path_r )
+        for path in self.list_krita:
+            dirname = os.path.dirname( path )
+            if ( dirname != folder and path not in path_list ):
+                path_list.append( path )
+
         # Watch these Files
-        if len( path_list ) > 0:
-            self.file_system_watcher.addPaths( path_list )
-
-        # Construct List
-        self.dialog.menu_watcher_list.clear()
-        if dir_p != "":
-            item = QListWidgetItem( dir_p )
-            item.setIcon( Krita.instance().icon( 'document-open' ) )
-            self.dialog.menu_watcher_list.addItem( item )
-        # Add Recent Documents
-        if self.list_active == "Recent Documents":
-            for d in range( 0, len( self.list_recentdocument ) ):
-                path_d = os.path.normpath( self.list_recentdocument[d] )
-                item = QListWidgetItem( path_d )
-                if path_d in path_list:
-                    qicon = Krita.instance().icon( 'document-new' )
-                else:
-                    qicon = Krita.instance().icon( 'paintbrush' )
-                item.setIcon( qicon )
-                self.dialog.menu_watcher_list.addItem( item )
-        # Add References
-        for r in range( 0, len( self.list_pin_ref ) ):
-            path_r = self.list_pin_ref[r]["path"]
-            text_r = self.list_pin_ref[r]["text"]
-            if ( path_r != None and text_r == None ): # Image
-                item = QListWidgetItem( os.path.normpath( path_r ) )
-                if path_r in path_list:
-                    qicon = Krita.instance().icon( 'document-new' )
-                else:
-                    qicon = Krita.instance().icon( 'paintbrush' )
-            else: # Text
-                item = QListWidgetItem( text_r )
-                qicon = Krita.instance().icon( 'draw-text' )
-            item.setIcon( qicon )
-            self.dialog.menu_watcher_list.addItem( item )
-
-    def List_Reference( self ):
-        if self.list_active == "Reference Images":
-            # Found Paths Set
-            paths = []
-            for i in range( 0, len( self.found_path ) ):
-                item = self.found_path[i]
-                paths.append( item )
-            compare_path = set( paths )
-
-            # References Set
-            refs = []
-            for i in range( 0, len( self.list_pin_ref ) ):
-                item = self.list_pin_ref[i]["path"]
-                if self.list_pin_ref[i]["text"] == None:
-                    refs.append( item )
-            compare_ref = set( refs )
-
-            # Verify diferences to update Preview and Grid
-            if compare_path != compare_ref:
-                self.Filter_Keywords( False )
-
-    #endregion
-    #region Annotations ############################################################
-    def AutoSave_KRA( self, boolean ):
-        self.annotation_kra = boolean
-        # Save
-        Krita.instance().writeSetting( "Imagine Board", "annotation_kra", str( self.annotation_kra ) )
-    def AutoSave_File( self, boolean ):
-        self.annotation_file = boolean
-        # Save
-        Krita.instance().writeSetting( "Imagine Board", "annotation_file", str( self.annotation_file ) )
-
-    def Annotation_KRA_Load( self ):
-        if ( ( self.canvas() is not None ) and ( self.canvas().view() is not None ) ):
-            try:
-                # Active Document
-                doc = Krita.instance().activeDocument()
-
-                # Annotations
-                annotation = doc.annotation( "Imagine Board" )
-                an_string = str( annotation )
-                an_replace = an_string[:-3].replace( "b\"", "" )
-                an_split = an_replace.split( "\\n" )
-                self.Variables_Load( an_split )
-            except:
-                pass
-    def Annotation_FILE_Load( self ):
-        file_dialog = QFileDialog( QWidget( self ) )
-        file_dialog.setFileMode( QFileDialog.AnyFile )
-        directory_path = file_dialog.getOpenFileName( self, "Select *.imagine_board.eo File", "", str( "*.imagine_board.eo" ) )
-        directory_path = os.path.normpath( directory_path[0] )
-        if ( directory_path != "" and directory_path != "." ):
-            # Read
-            file = open( directory_path, "r" )
-            data = file.readlines()
-            self.Variables_Load( data )
-    def Variables_Load( self, lista ):
-        # lista = [str, str, str, ...]
-        try:
-            plugin = str( lista[0] ).replace( "\n", "", 1 )
-            if plugin  == "imagine_board":
-                # Read
-                for i in range( 0, len( lista ) ):
-                    lista_i = lista[i]
-                    if lista_i.startswith( "directory_path=" ) == True: # Preview and Grid
-                        self.directory_path = os.path.normpath( str( lista_i ).replace( "directory_path=", "", 1 ).replace( "\n", "", 1 ) )
-                    if lista_i.startswith( "list_pin_ref=" ) == True: # Reference
-                        self.list_pin_ref = eval( str( lista_i ).replace( "list_pin_ref=", "", 1 ) )
-                # Write
-                self.Folder_Load( self.directory_path )
-                self.Reference_Cache( self.list_pin_ref )
-                self.Board_Loader( self.list_pin_ref )
-        except:
-            pass
-
-    def Annotation_Save( self ):
-        if ( ( self.canvas() is not None ) and ( self.canvas().view() is not None ) ):
-            try:
-                # Document
-                doc = Krita.instance().activeDocument()
-
-                # Data to be Saved
-                data = ( 
-                    # Plugin
-                    "imagine_board\n"+
-                    # Preview and Grid
-                    "directory_path="+str( self.directory_path )+"\n"+
-                    # Reference
-                    "list_pin_ref="+str( self.list_pin_ref )+"\n"+
-                    # Other
-                    ""
-                    )
-
-                # Save Method
-                if doc != None:
-                    if self.annotation_kra == True:
-                        # Save to active Document
-                        doc.setAnnotation( 'Imagine Board', "Document", QByteArray( data.encode() ) )
-                    if self.annotation_file == True:
-                        # Variables
-                        file_path = os.path.normpath( doc.fileName() )
-                        base_name = os.path.basename( file_path )
-                        extension = os.path.splitext( file_path )[1]
-                        directory = file_path[:-len( base_name )]
-                        name = base_name[:-len( extension )]
-                        save_path = directory + name + ".imagine_board.eo"
-
-                        # Save to TXT file
-                        if ( file_path != "" and file_path != "." ):
-                            try:
-                                file = open( save_path, "w" )
-                                file.write( data )
-                            except:
-                                pass
-            except:
-                pass
+        for path in path_list:
+            exists = os.path.exists( path )
+            if exists == True:
+                self.file_system_watcher.addPath( path )
 
     #endregion
     #region Window #################################################################
+
     def Window_Connect( self ):
         # Window
         self.window = Krita.instance().activeWindow()
         if self.window != None:
-            # Connects
             self.window.activeViewChanged.connect( self.View_Changed )
             self.window.themeChanged.connect( self.Theme_Changed )
             self.window.windowClosed.connect( self.Window_Closed )
 
     def View_Changed( self ):
-        # Disables Auto Save
-        self.dialog.annotation_kra_save.setChecked( False )
-        self.dialog.annotation_file_save.setChecked( False )
+        # Lists
+        self.Recent_Documents( self.list_krita )
+        # Reference
+        self.Link_Live()
     def Theme_Changed( self ):
         # Krita Theme
         theme_value = QApplication.palette().color( QPalette.Window ).value()
@@ -3322,51 +2715,60 @@ class ImagineBoard_Docker( DockWidget ):
 
     #endregion
     #region Widget Events ##########################################################
+
     def showEvent( self, event ):
+        # Dockers
+        self.Welcome_Dockers()
         # Window
         self.Window_Connect()
         self.Theme_Changed()
-        # UI
-        self.Mode_Index( self.mode_index )
+        # Pigmento Module
+        self.Import_Pigment_O()
 
-        # Start Up display
-        if self.widget_display == False:
-            # Settings
+        # Reference
+        if self.state_load == False:
+            # QTimer
             start_up = QtCore.QTimer( self )
             start_up.setSingleShot( True )
-            start_up.timeout.connect( self.Settings_Load )
-            start_up.timeout.connect( self.Import_Pigment_O )
-            start_up.start( 2000 )
+            start_up.timeout.connect( lambda: self.File_Load( self.ref_board ) )
+            start_up.start( 3000 )
+    def moveEvent( self, event ):
+        if self.state_maximized != self.isMaximized():
+            self.Update_Size()
     def resizeEvent( self, event ):
         self.Update_Size()
     def enterEvent( self, event ):
+        # Variables
+        self.state_inside = True
         # Widget
-        self.is_inside = True
         self.Transparent_Shift()
-
-        # Start Up display
-        self.Settings_Load()
-
         # Update
         self.update()
     def leaveEvent( self, event ):
-        # Cursor Focus
+        # Variables
+        self.state_inside = False
+        # Widgets
         self.Clear_Focus()
-        # Widget
-        self.is_inside = False
         self.Transparent_Shift()
-        # Save
-        self.Annotation_Save()
-        # Update
         self.update()
     def closeEvent( self, event ):
-        self.MODULE_pigmento_bool = False
-        self.widget_display = False
-        self.found_qpixmap.clear()
-        # Save
-        self.Annotation_Save()
+        # Variables
+        self.pigment_o_module = None
+        # Lists
+        self.Function_String_List()
 
     def eventFilter( self, source, event ):
+        # Widgets
+        widgets = [
+            self.layout.preview_view,
+            self.layout.imagine_grid,
+            self.layout.reference_view,
+            self.layout.footer,
+            ]
+        if ( event.type() == QEvent.Resize and source in widgets ):
+            self.Update_Size()
+            return True
+
         # Mode
         if ( event.type() == QEvent.MouseButtonPress and source is self.layout.mode ):
             self.Menu_Mode_Press( event )
@@ -3377,23 +2779,37 @@ class ImagineBoard_Docker( DockWidget ):
 
         # Folder
         if ( event.type() == QEvent.ContextMenu and source is self.layout.folder ):
-            self.Menu_Folder( event )
+            self.Folder_Menu( event )
+            return True
+        # Link
+        if ( event.type() == QEvent.ContextMenu and source is self.layout.link ):
+            self.Reference_Menu( event )
+            return True
+
+        # Lists
+        if ( event.type() == QEvent.ContextMenu and source is self.dialog.function_keyword ):
+            self.Function_String_Context( event )
+            return True
+        if ( event.type() == QEvent.Leave and source is self.dialog.function_keyword ):
+            self.Function_String_List()
+            return True
+
+        # Picker
+        if ( event.type() == QEvent.Leave and source is self.picker ):
+            self.Picker_Cancel()
             return True
 
         return super().eventFilter( source, event )
-    def paintEvent( self, event ):
-        # Bypass PyQt5 limitation to detect correct size of widget right after change in Size Policy
-        if self.dirty > 0:
-            self.Update_Size()
-            self.dirty -= 1
 
     #endregion
     #region Change Canvas ##########################################################
+
     def canvasChanged( self, canvas ):
-        self.Menu_Tabs()
+        pass
 
     #endregion
     #region Notes ##################################################################
+
     """
     # Label Message
     self.layout.label.setText( "message" )
@@ -3402,601 +2818,477 @@ class ImagineBoard_Docker( DockWidget ):
     QMessageBox.information( QWidget(), i18n( "Warnning" ), i18n( "message" ) )
 
     # Log Viewer Message
-    QtCore.qDebug( "value = " + str( value ) )
+    QtCore.qDebug( f"value = { value }" )
     QtCore.qDebug( "message" )
     QtCore.qWarning( "message" )
     QtCore.qCritical( "message" )
+    """
 
-    Code
-    found_qpixmap = qpixmap#.scaled( self.tn_size, self.tn_size, Qt.KeepAspectRatioByExpanding, self.tn_smooth_scale )
+    """
+    if ( self.canvas() is not None ) and ( self.canvas().view() is not None ):
+        pass
+    """
 
+    """
+    found_qpixmap = qpixmap.scaled( self.tn_size, self.tn_size, Qt.KeepAspectRatioByExpanding, Qt.FastTransformation )
+    """
+
+    """
     mime_data = sorted( mime_data, key=lambda d: d['name'] )
+    """
 
+    """
     reader = QImageReader( folder_files )
     if reader.canRead() == True:
-        file_path.append( folder_files )
+        image_path.append( folder_files )
     del reader
     """
+
+    """
+    OS.PATH notes
+    - Exists os.path.samefile( path1, path2 ) for the Function when applying changes
+    - Directory and Name os.path.split( path )
+    - Extension os.path.splitext( f )
+    """
+
+    """
+    sql = f"SELECT DISTINCT {column} FROM {ref_table};"
+    """
+
+    """
+    # Screen
+    screen = QtWidgets.QDesktopWidget().screenGeometry( 0 ) # Size of monitor zero 0
+    screen_width = screen.width()
+    screen_height = screen.height()
+    """
+
+    """
+    # QImage to ByteData
+    def import_to_layer( image_path, layer_node, width, height):
+        qimage = QImage( image_path )
+        qimage = qimage.scaled(width, height, aspectRatioMode=Qt.KeepAspectRatio, transformMode=Qt.SmoothTransformation)
+        if not qimage.isNull():
+            qimage.convertToFormat(QImage.Format_RGBA8888)
+            ptr = qimage.constBits()
+            ptr.setsize( qimage.byteCount() )
+            layer_node.setPixelData( bytes( ptr.asarray() ), 0, 0, qimage.width(), qimage.height() )
+    """
+
+    """
+    qimage.convertToFormat( QImage.Format_RGBA8888 )
+    """
+
+    """
+    # Scale Pins
+    fx = board_w / self.ww
+    fy = board_h / self.hh
+    factor = 1 / ( max( fx, fy ) * self.cz )
+    for i in range( 0, count ):
+        self.Scale_Factor( self.pin_list, i, nx, ny, factor )
+        self.Pin_Draw_QPixmap( self.pin_list, i )
+    """
+
+    """
+    qwindow = Krita.instance().activeWindow().qwindow()
+    central = qwindow.centralWidget()
+    index = central.currentIndex()
+    central.currentChanged.connect( self.Link_Clear )
+    """
+
+    """
+    zdata = self.Bytes_QPixmap( qpixmap )
+    zdata = self.Bytes_Python( path )
+    """
+
     #endregion
 
-
-if thread_function == True:
-    tf_class = QThread
-else:
-    tf_class = QWidget
-class Thread_Function( tf_class ):
+class Worker_Function( QObject ):
     """
-    Run Function Operation in Batch  ( KEY ENTER )
+    Run Function operation to files in Batch ( KEY ENTER = name number [ keyword ].ext )
     """
-    SIGNAL_COUNTER = QtCore.pyqtSignal( int )
-    SIGNAL_PBAR_VALUE = QtCore.pyqtSignal( int )
-    SIGNAL_PBAR_MAX = QtCore.pyqtSignal( int )
-    SIGNAL_STRING = QtCore.pyqtSignal( str )
-    SIGNAL_NUMBER = QtCore.pyqtSignal( int )
-    SIGNAL_RESET = QtCore.pyqtSignal( list )
-    SIGNAL_ITEM = QtCore.pyqtSignal( str )
-    SIGNAL_NEWPATH = QtCore.pyqtSignal( dict )
 
-    #region Initialize #############################################################
-    if thread_function == True:
-        def __init__( self, parent = None ):
-            QThread.__init__( self, parent )
-            self.initialize()
-    else:
-        def __init__( self, parent ):
-            super( Thread_Function, self ).__init__( parent )
-            self.initialize()
+    #region Run ####################################################################
 
-    def initialize( self ):
-        # Operating System
-        self.OS = str( QSysInfo.kernelType() ) # WINDOWS=winnt & LINUX=linux
+    def run( self, source, mode, path_source, path_destination, file_list, operation, number, keyword, python_script ):
+        # Variables
+        self.source = source
+        self.path_source = path_source
+        self.path_destination = path_destination
+        file_total = len( file_list )
+
+        # Anchor
+        try:self.anchor_path = self.source.file_path[ self.source.preview_index ]
+        except:self.anchor_path = None
+        self.anchor_new = None
+
         # Modules
         self.qfile = QFile()
         self.qdir = QDir()
-        # Variables
-        self.Variables_Reset()
-    def Variables_Reset( self ):
-        self.operation = None
-        self.string = []
-        self.number = 0
-        self.path_list = []
-        self.destination = None
-    def Variables_Run( self, operation, string, number, path_list, destination, file_normal ):
-        # Reset
-        self.Variables_Reset()
-        # Variables
-        self.operation = operation
-        self.string = string
-        self.number = number
-        self.path_list = path_list
-        self.destination = destination
-        self.file_normal = file_normal
 
-    #endregion
-    #region Cycle ##################################################################
-    def run( self ):
         # Operation spacing
-        try:QtCore.qDebug( "IB" )
+        try:QtCore.qDebug( "" )
         except:pass
 
         # Time Watcher
         start = QtCore.QDateTime.currentDateTimeUtc()
 
-        # Files ( can still be nulls )
-        file_path = []
-        for i in range( 0, len( self.path_list ) ):
-            path_i = os.path.normpath( self.path_list[i] )
-            exists = os.path.exists( path_i )
-            if exists == True:
-                if os.path.isfile( path_i ) == True:
-                    file_path.append( path_i )
-                elif os.path.isdir( path_i ) == True:
-                    self.qdir.setPath( path_i )
-                    self.qdir.setSorting( QDir.LocaleAware )
-                    self.qdir.setFilter( QDir.Files | QDir.NoSymLinks | QDir.NoDotAndDotDot )
-                    self.qdir.setNameFilters( self.file_normal )
-                    info_list = self.qdir.entryInfoList()
-                    for f in range( 0, len( info_list ) ):
-                        folder_files = os.path.normpath( info_list[f].filePath() )
-                        file_path.append( folder_files )
+        # Progress Bar
+        self.source.dialog.progress.setValue( 0 )
+        self.source.dialog.progress.setMaximum( file_total )
 
-        # Operation Selection
-        null_operation = [">>", None]
-        if self.operation not in null_operation:
-            # Variables
-            file_total = len( file_path )
-            if self.operation == "save_original":
-                name = []
-                for i in range( 0, file_total ):
-                    basename = os.path.basename( file_path[i] )
-                    name.append( basename )
-
-            # Cycles
-            rename = ["key_add", "key_replace", "key_remove", "key_clean", "rename_order", "rename_age", "rename_random"]
-            if self.operation in rename:
-                self.Cycle_Rename( file_total, file_path, self.string, self.number )
-            elif self.operation == "key_populate":
-                self.Cycle_Populate( file_total, file_path )
-            elif self.operation == "save_original":
-                self.Cycle_Save_Original( file_total, file_path, name, self.destination )
-            elif self.operation == "save_order":
-                self.Cycle_Save_Order( file_total, file_path, self.string, self.number, self.destination )
-            elif self.operation == "search_null":
-                self.Cycle_Null( file_total, file_path )
-            elif self.operation == "search_copy":
-                self.Cycle_Copy( file_total, file_path )
+        # Operation Cycle
+        self.source.Watcher_State( False )
+        self.Cycle_Operation( file_total, file_list, operation, number, keyword, python_script )
+        self.source.Watcher_State( True )
 
         # Progress Bar
-        self.SIGNAL_PBAR_VALUE.emit( 0 )
-        self.SIGNAL_PBAR_MAX.emit( 1 )
+        self.source.dialog.progress.setValue( 0 )
+        self.source.dialog.progress.setMaximum( 1 )
 
         # Time Watcher
         end = QtCore.QDateTime.currentDateTimeUtc()
         delta = start.msecsTo( end )
         time = QTime( 0,0 ).addMSecs( delta )
-        try:QtCore.qDebug( "IB " + str( time.toString( 'hh:mm:ss.zzz' ) ) + " | Operation " + str( self.operation ) )
+        try:QtCore.qDebug( f"Imagine Board | FUNCTION>> { time.toString( 'hh:mm:ss.zzz' ) } | OPERATION { str( operation ).lower() }" )
         except:pass
 
-        # End
-        self.SIGNAL_RESET.emit( self.path_list )
+        # Update
+        self.source.Filter_Keywords( self.source.search, self.anchor_new )
+
+        # Stop Worker
+        if mode == "THREAD":source.Function_Thread_Quit()
 
     #endregion
-    #region Cycles #################################################################
-    def Cycle_Rename( self, total, path, key, number ):
-        self.SIGNAL_PBAR_MAX.emit( total )
-        # Pre Sorting
-        if self.operation == "rename_age":
-            path = self.Sort_Age( total, path )
+    #region Cycle ##################################################################
+
+    def Cycle_Operation( self, file_total, file_list, operation, number, keyword, python_script ):
+        # Variables
+        collection = []
+        found = 0
+
+        # Operation Type
+        if ( "KEY" in operation ) or ( "RENAME" in operation ) or ( operation == "SEARCH_NULL" ) or ( operation == "SEARCH_COPY" ):
+            operation_type = "rename"
+        if "SAVE" in operation:
+            operation_type = "save"
+
         # Cycle
-        for i in range( 0, total ):
+        for i in range( 0, file_total ):
             # Count
-            self.Progress_String_2( i+1, total )
-            self.SIGNAL_PBAR_VALUE.emit( i+1 )
-            # Old String
-            path_i = path[i]
+            index = i + 1
+            numi = number + i
+
             # New String
-            if self.operation == "key_add": # Add
-                path_new = self.String_Add( path_i, key )
-            if self.operation == "key_replace": # Replace
-                path_new = self.String_Replace( path_i, key )
-            if self.operation == "key_remove": # Remove
-                path_new = self.String_Remove( path_i, key )
-            if self.operation == "key_clean": # Clean
-                path_new = self.String_Clean( path_i )
-            if self.operation == "rename_order": # Rename
-                path_new = self.String_ReName( path_i, key, number, i, "order" )
-            if self.operation == "rename_age": # Rename
-                path_new = self.String_ReName( path_i, key, number, i, "age" )
-            if self.operation == "rename_random": # Rename
-                path_new = self.String_ReName( path_i, key, number, i, "random" )
+            path = file_list[i]
+            path_new = None
 
-            # Confirm Differences to Apply
-            exists = os.path.exists( os.path.normpath( path_new ) )
-            if ( path_i != path_new and exists == False ):
-                self.SIGNAL_NEWPATH.emit( {"old":path_i, "new":path_new} )
-                try:QtCore.qDebug( "IB rename | " + str( os.path.basename( path_i ) ) + " >> " + str( os.path.basename( path_new ) ) )
-                except:pass
-                boolean = self.qfile.rename( path_i, path_new )
+            # Key
+            if operation == "KEY_ADD":
+                path_new = self.String_Key_Add( path, keyword )
+            if operation == "KEY_REPLACE":
+                path_new = self.String_Key_Replace( path, keyword )
+            if operation == "KEY_REMOVE":
+                path_new = self.String_Key_Remove( path, keyword )
+            if operation == "KEY_CLEAN":
+                path_new = self.String_Key_Clean( path )
+            # Rename
+            if operation == "RENAME_ORDER":
+                path_new = self.String_Rename_Order( path, keyword, numi )
+                self.source.dialog.function_number.setValue( numi + 1 )
+            # Save
+            if self.path_destination != None:
+                if operation == "SAVE_ORDER":
+                    path_new = self.String_Save_Order( path, keyword, numi )
+                    self.source.dialog.function_number.setValue( numi + 1 )
+                if operation == "SAVE_ORIGINAL":
+                    keyword = os.path.basename( path )
+                    path_new = self.String_Save_Original( path, keyword )
+            # Search
+            if operation == "SEARCH_KEY":
+                key = self.String_Search_Key( path )
+                if key != None:collection.extend( key )
+            if operation == "SEARCH_NULL":
+                path_new, found = self.String_Search_Null( path, found )
+            if operation == "SEARCH_COPY":
+                path_new, found = self.String_Search_Copy( path, found, file_list, i )
+                if path_new != None:file_list[i] = path_new
+            # Python
+            if operation == "PYTHON_SCRIPT":
+                self.String_Python_Script( python_script, path, self.path_destination )
 
-    def Cycle_Populate( self, total, path ):
-        self.SIGNAL_PBAR_MAX.emit( total )
-        keys = ""
-        count = 0
-        for i in range( 0, total ):
-            path_i = path[i]
-            self.Progress_String_2( i+1, total )
-            self.SIGNAL_PBAR_VALUE.emit( i+1 )
-            keys += self.String_Populate( path_i )
-        words = list( set( keys.split() ) )
-        for w in range( 0, len( words ) ):
-            if ( w != "" and w != " " ):
-                self.SIGNAL_ITEM.emit( str( words[w] ) )
-    def Cycle_Save_Original( self, total, path, name, destination ):
-        self.SIGNAL_PBAR_MAX.emit( total )
-        for i in range( 0, total ):
-            # Count
-            self.Progress_String_2( i+1, total )
-            self.SIGNAL_PBAR_VALUE.emit( i+1 )
-            # Save
-            path_i = path[i]
-            basename = name[i]
-            path_new = os.path.normpath( os.path.join( destination, basename ) )
-            check = os.path.exists( path_new )
-            if check == False:
-                qimage = QImage( path_i )
-                qimage.save( path_new )
-                try:QtCore.qDebug( "IB save original | " + str( path_new ) )
-                except:pass
-    def Cycle_Save_Order( self, total, path, string, number, destination ):
-        self.SIGNAL_PBAR_MAX.emit( total )
-        for i in range( 0, total ):
-            # Count
-            self.Progress_String_2( i+1, total )
-            self.SIGNAL_PBAR_VALUE.emit( i+1 )
-            number_i = number + i
-            # Save
-            path_i = path[i]
-            if len( string ) > 0:
-                new_name = string[0]
-            else:
-                new_name = "image"
-            path_new = os.path.normpath( self.String_Save_Order( destination, new_name, number_i ) )
-            check = os.path.exists( path_new )
-            if check == False:
-                qimage = QImage( path_i )
-                qimage.save( path_new )
-                try:QtCore.qDebug( "IB save order | " + str( path_new ) )
-                except:pass
-    def Cycle_Null( self, total, path ):
-        self.SIGNAL_PBAR_MAX.emit( total )
-        # Cycle
-        count = 0
-        for i in range( 0, total ):
-            # Count
-            self.Progress_String_3( count, i+1, total )
-            self.SIGNAL_PBAR_VALUE.emit( i+1 )
-            # Pixmap
-            path_i = path[i]
-            qpixmap = QPixmap( path_i )
-            if qpixmap.isNull() == True:
-                count += 1
-                path_new = self.String_Null( path_i )
-                # Confirm Differences to Apply
-                exists = os.path.exists( os.path.normpath( os.path.join( os.path.dirname( path_i ), path_new ) ) )
-                if ( path_i != path_new and exists == False ):
-                    self.SIGNAL_NEWPATH.emit( {"old":path_i, "new":path_new} )
-                    try:QtCore.qDebug( "IB rename | " + str( os.path.basename( path_i ) ) + " >> " + str( os.path.basename( path_new ) ) )
-                    except:pass
-                    self.qfile.rename( path_i, path_new )
-    def Cycle_Copy( self, total, path ):
-        ver_total = self.verify_total( total )
-        self.SIGNAL_PBAR_MAX.emit( ver_total )
-        copy = 0
-        index = 0
-        replicas = []
-        for i in range( 0, total ):
-            path_i = path[i]
-            qimage_i = QImageReader( path_i ).read()
-            for r in range( i+1, total ):
-                path_r = path[r]
-                index += 1
-                self.Progress_String_3( copy, index+1, ver_total+1 )
-                self.SIGNAL_PBAR_VALUE.emit( index+1 )
-                if path_r not in replicas:
-                    qimage_r = QImageReader( path_r ).read()
-                    check = self.Pixel_Check( qimage_i, qimage_r )
-                    if check == True:
-                        copy += 1
-                        replicas.append( path_r )
-                        path_new = self.String_Copy( path_r )
-                        if path_r != path_new:
-                            self.SIGNAL_NEWPATH.emit( {"old":path_r, "new":path_new} )
-                            try:QtCore.qDebug( "IB rename | " + str( os.path.basename( path_i ) ) + " = " + str( os.path.basename( path_r ) ) + " >> " + str( os.path.basename( path_new ) ) )
+            # Action
+            if path_new != None:
+                # Exists
+                exists = os.path.exists( path_new )
+                if ( path != path_new and exists == False ):
+                    if operation_type == "rename":
+                        boolean = self.qfile.rename( path, path_new )
+                        if boolean == True:
+                            try:QtCore.qDebug( f"Imagine Board | RENAME { os.path.basename( path ) } >> { os.path.basename( path_new ) }" )
                             except:pass
-                            self.qfile.rename( path_r, path_new )
+                    if operation_type == "save":
+                        qpixmap = QPixmap( path )
+                        if qpixmap.isNull() == True:
+                            response = urllib.request.urlopen( path )
+                            data = response.read()
+                            qpixmap = QPixmap()
+                            qpixmap.loadFromData( data )
+                        boolean = qpixmap.save( path_new )
+                        if boolean == True:
+                            try:QtCore.qDebug( f"Imagine Board | SAVE { path_new }" )
+                            except:pass
+                # Anchor Find
+                if path == self.anchor_path:
+                    self.anchor_new = path_new
 
-    def verify_total( self, value ):
-        mat = value * value
-        count = int( ( mat - value ) / 2 )
-        return count
-    def Progress_String_2( self, index, total ):
-        text_results = "index:" + str( index ) + "  total:" + str( total )
-        self.SIGNAL_STRING.emit( text_results )
-    def Progress_String_3( self, found, index, total ):
-        text_results = "found:" + str( found ) + "  index:" + str( index ) + "  total:" + str( total )
-        self.SIGNAL_STRING.emit( text_results )
-    def Sort_Age( self, total, path ):
-        age_1 = []
-        for i in range( 0, total ):
-            age = int( time.time() - os.stat( path[i] )[stat.ST_MTIME] )
-            age_1.append( age )
-        age_2 = age_1.copy()
-        age_2.sort()
-        age_2.reverse()
-        sort_age = []
-        for i in range( 0, total ):
-            for j in range( 0, total ):
-                if ( age_2[i] == age_1[j] and path[j] not in sort_age ):
-                    sort_age.append( path[j] )
-        path.clear()
-        path = sort_age.copy()
-        return sort_age
-    def Image_Check( self, qimage_i, qimage_r ):
-        if qimage_i == qimage_r:
-            return True
-        else:
-            return False
-    def Pixel_Check( self, qimage_i, qimage_r ):
-        # Variabels
-        wi = qimage_i.width()
-        hi = qimage_i.height()
-        wr = qimage_r.width()
-        hr = qimage_r.height()
+            # Feedback
+            self.Progress_String( index, file_total, found )
+            self.source.dialog.progress.setValue( index )
+            QApplication.processEvents()
 
-        # Pixel check
-        if ( wi == wr and hi == hr ):
-            check = True
-            for y in range( 0, hi ):
-                for x in range( 0, wi ):
-                    color_i = qimage_i.pixel( x, y )
-                    color_r = qimage_r.pixel( x, y )
-                    if color_i != color_r:
-                        check = False
-                        break
-                        break
-        else:
-            check = False
-
-        # Return
-        return check
+        if operation == "SEARCH_KEY":
+            collection = list( set( collection ) )
+            collection.sort()
+            for item in collection:
+                self.source.dialog.function_keyword.addItem( item )
 
     #endregion
-    #region String #################################################################
-    """
-    Key Enter convention : ' Basename [ key1 key2 ... ].extension '
-    """
+    #region Edit ###################################################################
 
-    def String_Add( self, path, key ):
-        if len( key ) == 0:
+    # Keywords
+    def String_Key_Add( self, path, keyword ):
+        if len( keyword ) == 0:
             path_new = path
         else:
             # String Components
-            directory, basename, extension, n, base = self.Path_Components( path )
+            directory, basename, name, extension = self.Path_Components( path )
 
-            # construct keywords
-            a = base.rfind( " [ " )
-            b = base.rfind( " ]" )
+            # Construct keywords
+            a = name.rfind( " [ " )
+            b = name.rfind( " ]" )
             if ( a >= 0 and b >= 0 and a < b ): # Keys Exist
-                name = base[:a]
-                c = base[a+3:b].split()
-                d = list( set( c ).union( set( key ) ) )
+                identity = name[:a]
+                c = name[a+3:b].split()
+                d = list( set( c ).union( set( keyword ) ) )
             else: # No Keys Exist
-                name = base
-                d = key
+                identity = name
+                d = keyword
             d.sort()
             keys = " [ "
             for i in range( 0, len( d ) ):
-                keys += d[i] + " "
+                keys += f"{ d[i] } "
             keys += "]"
 
-            # Create new path name
-            if self.OS == "winnt":
-                base_new = name + keys + extension
-            else:
-                base_new = name + keys
+            # Create new path
+            base_new = identity + keys + extension
             path_new = os.path.join( directory, base_new )
-        # Return
-        path_new = os.path.normpath( path_new )
         return path_new
-    def String_Replace( self, path, key ):
-        if len( key ) == 0:
+    def String_Key_Replace( self, path, keyword ):
+        if len( keyword ) == 0:
             path_new = path
         else:
             # String Components
-            directory, basename, extension, n, base = self.Path_Components( path )
+            directory, basename, name, extension = self.Path_Components( path )
 
-            # construct keywords
-            a = base.rfind( " [ " )
-            b = base.rfind( " ]" )
+            # Construct keywords
+            a = name.rfind( " [ " )
+            b = name.rfind( " ]" )
             if ( a >= 0 and b >= 0 and a < b ): # Keys Exist
-                name = base[:a]
+                identity = name[:a]
             else: # No Keys Exist
-                name = base
-            d = key
+                identity = name
+            d = keyword
             d.sort()
             keys = " [ "
             for i in range( 0, len( d ) ):
-                keys += d[i] + " "
+                keys += f"{ d[i] } "
             keys += "]"
 
-            # Create new path name
-            if self.OS == "winnt":
-                base_new = name + keys + extension
-            else:
-                base_new = name + keys
+            # Create new path
+            base_new = identity + keys + extension
             path_new = os.path.join( directory, base_new )
-        # Return
-        path_new = os.path.normpath( path_new )
         return path_new
-    def String_Remove( self, path, key ):
-        if len( key ) == 0:
+    def String_Key_Remove( self, path, keyword ):
+        if len( keyword ) == 0:
             path_new = path
         else:
             # String Components
-            directory, basename, extension, n, base = self.Path_Components( path )
+            directory, basename, name, extension = self.Path_Components( path )
 
-            # construct keywords
-            a = base.rfind( " [ " )
-            b = base.rfind( " ]" )
+            # Construct keywords
+            a = name.rfind( " [ " )
+            b = name.rfind( " ]" )
             if ( a >= 0 and b >= 0 and a < b ): # Keys Exist
-                name = base[:a]
-                c = base[a+3:b].split()
-                d = list( set( c ).difference( set( key ) ) )
+                identity = name[:a]
+                c = name[a+3:b].split()
+                d = list( set( c ).difference( set( keyword ) ) )
             else: # No Keys Exist
-                name = base
-                d = key
+                identity = name
+                d = keyword
             d.sort()
 
             # Keys left to display
             if len( d ) >= 1:
                 keys = " [ "
                 for i in range( 0, len( d ) ):
-                    keys += d[i] + " "
+                    keys += f"{ d[i] } "
                 keys += "]"
             else:
                 keys = ""
 
-            # Create new path name
-            if self.OS == "winnt":
-                base_new = name + keys + extension
-            else:
-                base_new = name + keys
+            # Create new path
+            base_new = identity + keys + extension
             path_new = os.path.join( directory, base_new )
-        # Return
-        path_new = os.path.normpath( path_new )
         return path_new
-    def String_Clean( self, path ):
+    def String_Key_Clean( self, path ):
         # String Components
-        directory, basename, extension, n, base = self.Path_Components( path )
+        directory, basename, name, extension = self.Path_Components( path )
 
-        # construct keywords
-        a = base.rfind( " [ " )
-        b = base.rfind( " ]" )
+        # Construct keywords
+        a = name.rfind( " [ " )
+        b = name.rfind( " ]" )
         if ( a >= 0 and b >= 0 and a < b ): # Keys Exist
-            name = base[:a]
+            identity = name[:a]
         else: # No Keys Exist
-            name = base
+            identity = name
 
-        # Create new path name
-        if self.OS == "winnt":
-            base_new = name + extension
-        else:
-            base_new = name
+        # Create new path
+        base_new = identity + extension
         path_new = os.path.join( directory, base_new )
         # Return
-        path_new = os.path.normpath( path_new )
         return path_new
-    def String_Populate( self, path ):
-        # String Components
-        directory, basename, extension, n, base = self.Path_Components( path )
-
-        # construct keywords
-        a = base.rfind( " [ " )
-        b = base.rfind( " ]" )
-        if ( a >= 0 and b >= 0 and a < b ): # Keys Exist
-            keys = str( base[a+3:b] ) + " "
-        else: # No Keys Exist
-            keys = " "
-
-        # Return
-        return keys
-    def String_ReName( self, path, key, number, iter, mode ):
-        if len( key ) == 0:
+    # Rename
+    def String_Rename_Order( self, path, keyword, number ):
+        if len( keyword ) == 0:
             path_new = path
         else:
             # String Components
-            directory, basename, extension, n, base = self.Path_Components( path )
+            directory, basename, name, extension = self.Path_Components( path )
 
-            # construct keywords
-            a = base.rfind( " [ " )
-            b = base.rfind( " ]" )
+            # Construct keywords
+            a = name.rfind( " [ " )
+            b = name.rfind( " ]" )
             if ( a >= 0 and b >= 0 and a < b ): # Keys Exist
-                name_old = base[:a-1]
-                keywords = base[a:]
+                identity = name[:a-1]
+                keys = name[a:]
             else: # No Keys Exist
-                name_old = base
-                keywords = ""
+                identity = name
+                keys = ""
 
             # Generate Names
-            if ( mode == "order" or mode == "age" ):
-                name_new = key[0] + " " + str( int( number ) + iter ).zfill( 6 )
-            if mode == "random":
-                code = ""
-                for i in range( 0, 20 ):
-                    c = random.randint( 1, 3 )
-                    if c == 1:
-                        n = random.randint( 48, 57 )
-                    if c == 2:
-                        n = random.randint( 65, 90 )
-                    if c == 3:
-                        n = random.randint( 97, 122 )
-                    code += chr( n )
-                name_new = key[0] + " " + code
+            name_new = f"{ keyword[0] } { str( number ).zfill( 6 ) }"
 
-            # Create new path name
-            if self.OS == "winnt":
-                base_new = name_new + keywords + extension
-            else:
-                base_new = name_new + keywords
+            # Create new path
+            base_new = name_new + keys + extension
             path_new = os.path.join( directory, base_new )
-        # Return
-        path_new = os.path.normpath( path_new )
         return path_new
-    def String_Save_Order( self, destination, name, number ):
-        # Number formating
-        self.SIGNAL_NUMBER.emit( number+1 )
-        num_str = str( number ).zfill( 6 )
-        # Create new path name
-        if self.OS == "winnt":
-            base_new = name + " " + num_str + ".png"
+    # Save
+    def String_Save_Order( self, path, keyword, number ):
+        if len( keyword ) == 0:
+            identity = "image.png"
         else:
-            base_new = name + " " + num_str
-        QtCore.qDebug( "base_new = " + str( base_new ) )
-        # Return
-        path_new = os.path.normpath( os.path.join( destination, base_new ) )
-        QtCore.qDebug( "path_new = " + str( path_new ) )
+            identity = keyword[0]
+        num = str( number ).zfill( 6 )
+        base_new = f"{ identity } { num }.png"
+        path_new = os.path.join( self.path_destination, base_new )
         return path_new
-    def String_Null( self, path ):
+    def String_Save_Original( self, path, keyword ):
+        path_new = os.path.join( self.path_destination, keyword )
+        return path_new
+    # Search
+    def String_Search_Key( self, path ):
         # String Components
-        directory, basename, extension, n, base = self.Path_Components( path )
+        directory, basename, name, extension = self.Path_Components( path )
 
         # construct keywords
-        a = base.rfind( " [ " )
-        b = base.rfind( " ]" )
+        a = name.rfind( " [ " )
+        b = name.rfind( " ]" )
         if ( a >= 0 and b >= 0 and a < b ): # Keys Exist
-            name = base[:a]
-        else: # No Keys Exist
-            name = base
-
-        # Create new path name
-        text = "null"
-        if self.OS == "winnt":
-            base_new = name + " [ " + text + " ]" + extension
+            keys = f"{ name[a+3:b] }"
+            keys = keys.split( " " )
+            return keys
+    def String_Search_Null( self, path, found ):
+        reader = QImageReader( path )
+        if reader.canRead() == True:
+            path_new = None
         else:
-            base_new = name + " [ " + text + " ]"
-        path_new = os.path.join( directory, base_new )
+            # Found
+            found += 1
+            # String Components
+            directory, basename, name, extension = self.Path_Components( path )
+            # construct keywords
+            a = name.rfind( " [ " )
+            b = name.rfind( " ]" )
+            if ( a >= 0 and b >= 0 and a < b ): # Keys Exist
+                name = name[:a]
+            # Create new path name
+            basename_new = f"{ name } [ null ]{ extension }"
+            path_new = os.path.join( directory, basename_new )
         # Return
-        path_new = os.path.normpath( path_new )
-        return path_new
-    def String_Copy( self, path ):
-        # String Components
-        directory, basename, extension, n, base = self.Path_Components( path )
+        return path_new, found
+    def String_Search_Copy( self, path, found, compare, index ):
+        path_new = None
+        qimage_i = QImageReader( path ).read()
+        for c in range( 0, index ):
+            qimage_c = QImageReader( compare[c] ).read()
+            check = qimage_i == qimage_c
+            if check == True:
+                # Found
+                found += 1
+                # String Components
+                directory, basename, name, extension = self.Path_Components( path )
+                # construct keywords
+                a = name.rfind( " [ " )
+                b = name.rfind( " ]" )
+                if ( a >= 0 and b >= 0 and a < b ): # Keys Exist
+                    name = name[:a]
+                # Create new path name
+                basename_new = f"{ name } [ copy ]{ extension }"
+                path_new = os.path.join( directory, basename_new )
+                # Cycle
+                del qimage_c
+                break
+            del qimage_c
+        del qimage_i
+        return path_new, found
+    # Python
+    def String_Python_Script( self, python_script, path, path_destination ):
+        worker_python = Worker_Python()
+        worker_python.run( python_script, path, path_destination )
 
-        # construct keywords
-        a = base.rfind( " [ " )
-        b = base.rfind( " ]" )
-        if ( a >= 0 and b >= 0 and a < b ): # Keys Exist
-            name = base[:a]
-        else: # No Keys Exist
-            name = base
-
-        # Create new path name
-        text = "copy"
-        if self.OS == "winnt":
-            base_new = name + " [ " + text + " ]" + extension
-        else:
-            base_new = name + " [ " + text + " ]"
-        path_new = os.path.join( directory, base_new )
-        # Return
-        path_new = os.path.normpath( path_new )
-        return path_new
-
+    # Assitance
     def Path_Components( self, path ):
         directory = os.path.dirname( path ) # dir
         basename = os.path.basename( path ) # name.ext
-        extension = os.path.splitext( path )[1] # .ext
-        n = basename.find( extension )
-        base = basename[:n] # name
-        return directory, basename, extension, n, base
+        split_text = os.path.splitext( basename )
+        name = split_text[0] # name
+        extension = split_text[1] # .ext
+        return directory, basename, name, extension
+    def Progress_String( self, index, total, found ):
+        text_results = f"index:{ index }  total:{ total }"
+        if found > 0:
+            text_results += f"  found:{ found }"
+        self.source.dialog.function_label.setText( text_results )
 
     #endregion
 
+class Worker_Python( QObject ):
+    """
+    Run python script to each file in batch
+    """
+
+    def run( self, python_script, image_file, path_destination ):
+        # Implicit Paths
+        # image_file = path_source files or file collection, given by Imagine Board
+        # path_destination = directory path to save files into, given by Imagine Board
+        try:
+            exec( python_script )
+        except Exception as e:
+            try:QtCore.qDebug( f"Imagine Board | ERROR Python script\nimage_file={ image_file } path_destination={ path_destination }\n{ e }" )
+            except:pass
+
 
 """
-To Do:
-- Reset Board View
-- Scaling of Selections
-- Reference : Normalize width / height of the pins
-- Rebase missing files into a new folder ( new location of source )
-- Database test to see if it performs faster with more data
-- Create Empty Image Folder for Download
-
-Known Bug:
-- Importing layer with alpha crops image size ( reason unknown )
-- Preview Mode on Windows, if it is openning a protected folder with OS_Folders and with first file a ZIP it will crash Krita instantly
-
-Warnning can cause instant crash
-- Writting a debug message on startup without the log viewer
-- Stopping a thread that does not exist yet
-- Threads should not change the layout directly
+Known Krita Bugs:
+- Importing reference with alpha crops image size
 """
