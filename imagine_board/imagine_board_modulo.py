@@ -21,7 +21,6 @@
 import os
 import copy
 import math
-import sqlite3
 import time
 import urllib
 import zipfile
