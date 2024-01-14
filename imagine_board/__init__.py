@@ -22,7 +22,7 @@ from .imagine_board_docker import *
 
 
 # Information
-__version__ = ' 1.0.0 '
+__version__ = ' 2.0.0 '
 __license__ = ' GPLv3+ LGPLv3+ '
 __author__ = ' Ricardo Jeremias '
 __email__ = ' jeremy6321478@gmail.com '
