@@ -1,32 +1,33 @@
-![Picture](https://github.com/EyeOdin/imagine_board/blob/main/imagine_board/LOGO/imagine_board_logo_S.png)
+![Picture](https://raw.githubusercontent.com/EyeOdin/imagine_board/master/imagine_board/LOGO/imagine_board_logo_S.png)
 
-## Purpose
+# Purpose
 
 Imagine Board is a Krita plugin to browse images and create image boards.
 
+# Features
 
-## Features
 * Modes: Preview, Grid and Reference
-* Preview Slideshow
-* Grid Thumbnail Cache
-* Reference History
-* Mouse and Stylus interface
-* Slider and Number Location
-* Search with positive and negative keywords
+* Mouse and Stylus Interface
+* Slider and Number Index Interface
 * Dynamic File Watcher
-* XML Data of Document
-* Organize Image Folders
-* Supports Various file formats
+* Search
+* Slideshow
+* Link Boards
+* Packing
+* Batch Processor
+* Support to various File Formats
 * Read ![wiki](https://github.com/EyeOdin/imagine_board/wiki) for more information
 
+# Preview
 
-## Preview
-![Picture](https://github.com/EyeOdin/imagine_board/blob/main/imagine_board/PREVIEWS/imagine_board_001.png)
-![Picture](https://github.com/EyeOdin/imagine_board/blob/main/imagine_board/PREVIEWS/imagine_board_002.png)
-![Picture](https://github.com/EyeOdin/imagine_board/blob/main/imagine_board/PREVIEWS/imagine_board_003.png)
+![Picture](https://raw.githubusercontent.com/EyeOdin/imagine_board/master/imagine_board/PREVIEWS/ib_d001.png)
 
+![Picture](https://raw.githubusercontent.com/EyeOdin/imagine_board/master/imagine_board/PREVIEWS/ib_d002.png)
 
-## Support
+![Picture](https://raw.githubusercontent.com/EyeOdin/imagine_board/master/imagine_board/PREVIEWS/ib_d003.png)
+
+# Support
+
 This project will remain Open source and available to all users.\
 Support with donations to keep the project alive and maintained.
 
