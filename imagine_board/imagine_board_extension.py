@@ -15,24 +15,19 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
-#region Import Modules #############################################################
+#region Import Modules
 
 from krita import *
 from PyQt5 import Qt, QtWidgets, QtCore, QtGui, QtSvg, uic
 from PyQt5.Qt import Qt
 
 #endregion
-#region Global Variables ###########################################################
 
-#endregion
 
 class ImagineBoard_Extension( Extension ):
-    """
-    Extension Shortcuts.
-    """
     SIGNAL_BROWSE = QtCore.pyqtSignal( int )
 
-    #region Initialize #############################################################
+    #region Initialize
 
     def __init__( self, parent ):
         super().__init__( parent )
@@ -40,7 +35,7 @@ class ImagineBoard_Extension( Extension ):
         pass
 
     #endregion
-    #region Actions ################################################################
+    #region Actions
 
     def createActions( self, window ):
         # Create Menu
@@ -56,7 +51,7 @@ class ImagineBoard_Extension( Extension ):
         action_browse_plus.triggered.connect( self.Browse_Plus )
 
     #endregion
-    #region Functions ##############################################################
+    #region Functions
 
     def Browse_Minus( self ):
         self.SIGNAL_BROWSE.emit( -1 )
