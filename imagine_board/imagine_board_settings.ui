@@ -16,11 +16,6 @@
     <verstretch>0</verstretch>
    </sizepolicy>
   </property>
-  <property name="font">
-   <font>
-    <family>Liberation Mono</family>
-   </font>
-  </property>
   <layout class="QVBoxLayout" name="imagineboard_settings_layout">
    <property name="spacing">
     <number>0</number>
@@ -130,7 +125,7 @@
                <x>0</x>
                <y>0</y>
                <width>480</width>
-               <height>449</height>
+               <height>448</height>
               </rect>
              </property>
              <layout class="QVBoxLayout" name="scroll_area_contents_display_layout">
@@ -937,7 +932,7 @@
                <x>0</x>
                <y>0</y>
                <width>480</width>
-               <height>449</height>
+               <height>448</height>
               </rect>
              </property>
              <property name="sizePolicy">
@@ -1008,12 +1003,6 @@
                      <width>50</width>
                      <height>16777215</height>
                     </size>
-                   </property>
-                   <property name="font">
-                    <font>
-                     <family>Consolas</family>
-                     <pointsize>12</pointsize>
-                    </font>
                    </property>
                    <property name="focusPolicy">
                     <enum>Qt::NoFocus</enum>
@@ -1529,7 +1518,7 @@
         </widget>
         <widget class="QWidget" name="tab_python">
          <attribute name="title">
-          <string>Python</string>
+          <string>PYTHON</string>
          </attribute>
          <layout class="QVBoxLayout" name="tab_python_layout">
           <property name="spacing">
@@ -1579,6 +1568,11 @@
               <horstretch>0</horstretch>
               <verstretch>0</verstretch>
              </sizepolicy>
+            </property>
+            <property name="font">
+             <font>
+              <family>Lucida Console</family>
+             </font>
             </property>
             <property name="focusPolicy">
              <enum>Qt::ClickFocus</enum>
@@ -1645,7 +1639,7 @@
                <x>0</x>
                <y>0</y>
                <width>480</width>
-               <height>449</height>
+               <height>448</height>
               </rect>
              </property>
              <layout class="QVBoxLayout" name="scroll_area_contents_system_layout">
@@ -1910,7 +1904,6 @@
        </property>
        <property name="font">
         <font>
-         <family>Liberation Mono</family>
          <pointsize>7</pointsize>
         </font>
        </property>
@@ -1947,7 +1940,6 @@
        </property>
        <property name="font">
         <font>
-         <family>Liberation Mono</family>
          <pointsize>7</pointsize>
         </font>
        </property>
