@@ -15,7 +15,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
-#region Imports ####################################################################
+#region Imports
 
 # Python
 import os
@@ -32,7 +32,7 @@ from PyQt5 import QtWidgets, QtCore, QtGui, uic
 from .imagine_board_calculations import *
 
 #endregion
-#region Global Variables ###########################################################
+#region Global Variables
 
 # Color Picker Display
 colorpicker_size = 250
@@ -47,7 +47,7 @@ cps_h = colorpicker_size - ( cps_g * 2 )
 
 #endregion
 
-#region Shared Function ############################################################
+#region Shared Function
 
 # Painter
 def Painter_Triangle( self, painter, w2, h2, side ):
@@ -273,7 +273,7 @@ def Insert_Check( self ):
     return insert
 
 #endregion
-#region Panels #####################################################################
+#region Panels
 
 class ImagineBoard_Preview( QWidget ):
     # General
@@ -633,9 +633,14 @@ class ImagineBoard_Preview( QWidget ):
             return qpixmap
     def Comp_Increment( self, increment ):
         if self.state_compact == True:
+            # Preparation
             self.Display_Reset( False )
-            self.comp_index = Limit_Range( self.comp_index + increment, 0, self.comp_count )
-            self.preview_qpixmap = self.Comp_Read( self.comp_archive, self.comp_path[self.comp_index] )
+            # Index
+            comp_index = Limit_Range( self.comp_index + increment, 0, self.comp_count )
+            if self.comp_index != comp_index:
+                self.comp_index = comp_index
+                self.preview_qpixmap = self.Comp_Read( self.comp_archive, self.comp_path[self.comp_index] )
+    	    # Signals
             self.SIGNAL_EXTRA_VALUE.emit( self.comp_index )
             self.update()
             self.Camera_Grab()
@@ -683,9 +688,9 @@ class ImagineBoard_Preview( QWidget ):
     # Extra UI
     def Extra_Label( self, mode ):
         string = ""
-        if ( self.state_animation == True and mode == True ):
+        if ( self.state_animation == True and mode == True ) == True:
             string = f"{ self.anim_frame }:{ self.anim_count }"
-        if ( self.state_compact == True and mode == True ):
+        if ( self.state_compact == True and mode == True and len( self.comp_path ) > 0 ) == True:
             string = f"{ self.comp_path[self.comp_index] }"
         self.SIGNAL_EXTRA_LABEL.emit( string )
 
@@ -3742,7 +3747,7 @@ class ImagineBoard_Reference( QWidget ):
         action_reset_scale     = menu_reset.addAction( "Scale" )
         # Edit
         menu_edit = qmenu.addMenu( "Edit" )
-        action_edit_grey   = menu_edit.addAction( "Greyscale" )
+        action_edit_grey   = menu_edit.addAction( "View Greyscale" )
         action_edit_flip_h = menu_edit.addAction( "Flip Horizontal" )
         action_edit_flip_v = menu_edit.addAction( "Flip Vertical" )
         action_edit_reset  = menu_edit.addAction( "Reset" )
@@ -4516,7 +4521,7 @@ class ImagineBoard_Reference( QWidget ):
         """
 
 #endregion
-#region Threads ####################################################################
+#region Threads
 
 class Worker_Packer( QObject ):
 
@@ -5132,7 +5137,7 @@ class Worker_Packer( QObject ):
         return boolean
 
 #endregion
-#region Color Picker ##############################################################
+#region Color Picker
 
 class Picker_Block( QWidget ):
     SIGNAL_COLOR = QtCore.pyqtSignal( [ QColor ] )
