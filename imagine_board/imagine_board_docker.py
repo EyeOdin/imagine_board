@@ -15,7 +15,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
-#region Imports ####################################################################
+#region Imports
 
 # Python Modules
 import sys
@@ -47,16 +47,12 @@ from .imagine_board_modulo import (
     Picker_Color_HSV,
     )
 
-import os
-from krita import Krita
-from PyQt5.Qt import *
-
 #endregion
-#region Global Variables ###########################################################
+#region Global Variables
 
 # Plugin
 DOCKER_NAME = "Imagine Board"
-imagine_board_version = "2024_01_10"
+imagine_board_version = "2024_03_04"
 
 # File Formats
 extensions = [
@@ -114,11 +110,8 @@ encode = "utf-8"
 
 
 class ImagineBoard_Docker( DockWidget ):
-    """
-    Display and Organize images
-    """
 
-    #region Initialize #############################################################
+    #region Initialize
 
     def __init__( self ):
         super( ImagineBoard_Docker, self ).__init__()
@@ -328,6 +321,12 @@ class ImagineBoard_Docker( DockWidget ):
         # File Watcher
         self.file_system_watcher = QFileSystemWatcher( self )
         self.file_system_watcher.directoryChanged.connect( self.Watcher_Display )
+
+        #endregion
+        #region Notifier
+
+        self.notifier = Krita.instance().notifier()
+        self.notifier.windowCreated.connect( self.Window_Created )
 
         #endregion
         #region Preview
@@ -549,7 +548,7 @@ class ImagineBoard_Docker( DockWidget ):
         try:
             self.Loader()
         except Exception as e:
-            self.Message_Warnning( "ERROR", f"Load \n{ e }" )
+            self.Message_Warnning( "ERROR", f"Load\n{ e }" )
             self.Variables()
             self.Loader()
 
@@ -618,7 +617,7 @@ class ImagineBoard_Docker( DockWidget ):
         return read
 
     #endregion
-    #region Interface ##############################################################
+    #region Interface
 
     # User Interface
     def Mode_Index( self, index ):
@@ -698,7 +697,8 @@ class ImagineBoard_Docker( DockWidget ):
         if self.sync_list == "Krita":
             self.Recent_Documents( self.list_krita )
         # Display
-        self.Filter_Search()
+        if self.state_load == True:
+            self.Filter_Search()
         # Finish
         Krita.instance().writeSetting( "Imagine Board", "sync_list", str( self.sync_list ) )
         # self.update()
@@ -708,23 +708,25 @@ class ImagineBoard_Docker( DockWidget ):
         if sync_type == "Normal": self.file_extension = file_normal
         if sync_type == "BackUp~":self.file_extension = file_backup
         # Display
-        self.Filter_Search()
+        if self.state_load == True:
+            self.Filter_Search()
         # Save
         Krita.instance().writeSetting( "Imagine Board", "sync_type", str( self.sync_type ) )
     def Sync_Sort( self, sync_sort ):
         # Sorting
         self.sync_sort = sync_sort
-        if sync_sort == "Local Aware":self.file_sort = QDir.LocaleAware
-        if sync_sort == "Name":       self.file_sort = QDir.Name
-        if sync_sort == "Time":       self.file_sort = QDir.Time
-        if sync_sort == "Size":       self.file_sort = QDir.Size
-        if sync_sort == "Type":       self.file_sort = QDir.Type
-        if sync_sort == "Unsorted":   self.file_sort = QDir.Unsorted
-        if sync_sort == "No Sort":    self.file_sort = QDir.NoSort
-        if sync_sort == "Reversed":   self.file_sort = QDir.Reversed
-        if sync_sort == "Ignore Case":self.file_sort = QDir.IgnoreCase
+        if sync_sort == "Local Aware": self.file_sort = QDir.LocaleAware
+        if sync_sort == "Name":        self.file_sort = QDir.Name
+        if sync_sort == "Time":        self.file_sort = QDir.Time
+        if sync_sort == "Size":        self.file_sort = QDir.Size
+        if sync_sort == "Type":        self.file_sort = QDir.Type
+        if sync_sort == "Unsorted":    self.file_sort = QDir.Unsorted
+        if sync_sort == "No Sort":     self.file_sort = QDir.NoSort
+        if sync_sort == "Reversed":    self.file_sort = QDir.Reversed
+        if sync_sort == "Ignore Case": self.file_sort = QDir.IgnoreCase
         # Display
-        self.Filter_Search()
+        if self.state_load == True:
+            self.Filter_Search()
         # Save
         Krita.instance().writeSetting( "Imagine Board", "sync_sort", str( self.sync_sort ) )
     def Insert_Size( self, insert_size ):
@@ -972,7 +974,20 @@ class ImagineBoard_Docker( DockWidget ):
         self.Message_Log( "SIZE", f"{ width } x { height }" )
 
     #endregion
-    #region Management #############################################################
+    #region Management
+
+    # Communication
+    def Message_Log( self, operation, message ):
+        string = f"Imagine Board | { operation } { message }"
+        try:QtCore.qDebug( string )
+        except:pass
+    def Message_Warnning( self, operation, message ):
+        string = f"Imagine Board | { operation } { message }"
+        QMessageBox.information( QWidget(), i18n( "Warnning" ), i18n( string ) )
+    def Message_Float( self, operation, message, icon ):
+        ki = Krita.instance()
+        string = f"Imagine Board | { operation } { message }"
+        ki.activeWindow().activeView().showFloatingMessage( string, ki.icon( icon ), 5000, 0 )
 
     # Import Modules
     def Import_Pigment_O( self ):
@@ -1004,19 +1019,6 @@ class ImagineBoard_Docker( DockWidget ):
             extension = extension.replace( ".", "" )
         return extension
 
-    # Communication
-    def Message_Log( self, operation, message ):
-        string = f"Imagine Board | { operation } { message }"
-        try:QtCore.qDebug( string )
-        except:pass
-    def Message_Warnning( self, operation, message ):
-        string = f"Imagine Board | { operation } { message }"
-        QMessageBox.information( QWidget(), i18n( "Warnning" ), i18n( string ) )
-    def Message_Float( self, operation, message, icon ):
-        ki = Krita.instance()
-        string = f"Imagine Board | { operation } { message }"
-        ki.activeWindow().activeView().showFloatingMessage( string, ki.icon( icon ), 5000, 0 )
-
     # Lists
     def Recent_Documents( self, list_old ):
         # Krita Read
@@ -1029,7 +1031,8 @@ class ImagineBoard_Docker( DockWidget ):
                 list_new.append( rd )
         if len( list_new ) != len( list_old ):
             self.list_krita = list_new
-            self.Filter_Search()
+            if self.state_load == True and self.sync_list == "Krita":
+                self.Filter_Search()
 
     # Internet
     def Download_QPixmap( self, url ):
@@ -1072,7 +1075,7 @@ class ImagineBoard_Docker( DockWidget ):
         return data
 
     #endregion
-    #region Signals ################################################################
+    #region Signals
 
     # File
     def File_Location( self, image_path ):
@@ -1291,7 +1294,7 @@ class ImagineBoard_Docker( DockWidget ):
             self.Reference_Increment( browse )
 
     #endregion
-    #region API ####################################################################
+    #region API
 
     def API_Preview_QPixmap( self, qpixmap ):
         # UI Extra Panels
@@ -1314,7 +1317,7 @@ class ImagineBoard_Docker( DockWidget ):
         """
 
     #endregion
-    #region Files ##################################################################
+    #region Files
 
     def Folder_Menu( self, event ):
         if self.folder_path == None:
@@ -1558,7 +1561,7 @@ class ImagineBoard_Docker( DockWidget ):
         return files
 
     #endregion
-    #region Display ################################################################
+    #region Display
 
     def Display_Update( self ):
         self.Display_Sync()
@@ -1608,7 +1611,7 @@ class ImagineBoard_Docker( DockWidget ):
             pass
 
     #endregion
-    #region Index ##################################################################
+    #region Index
 
     # Widgets
     def Index_Block( self, boolean ):
@@ -1643,7 +1646,7 @@ class ImagineBoard_Docker( DockWidget ):
         self.Index_Block( False )
 
     #endregion
-    #region Preview ################################################################
+    #region Preview
 
     # Preview Operations
     def Preview_Increment( self, increment ):
@@ -1773,13 +1776,13 @@ class ImagineBoard_Docker( DockWidget ):
         self.layout.extra_label.setText( string )
 
     #endregion
-    #region Grid ###################################################################
+    #region Grid
 
     def Grid_Increment( self, increment ):
         self.imagine_grid.Grid_Increment( increment )
 
     #endregion
-    #region Reference ##############################################################
+    #region Reference
 
     # Reference Operations
     def Reference_Increment( self, increment ):
@@ -2348,7 +2351,7 @@ class ImagineBoard_Docker( DockWidget ):
         Krita.instance().writeSetting( "Imagine Board", "ref_zoom", str( self.ref_zoom ) )
 
     #endregion
-    #region Color Picker ###########################################################
+    #region Color Picker
 
     def Block_Pen( self, qcolor ):
         self.picker_pen = qcolor
@@ -2456,7 +2459,7 @@ class ImagineBoard_Docker( DockWidget ):
             self.imagine_reference.Set_Label_Bg( hex_code )
 
     #endregion
-    #region Function>> #############################################################
+    #region Function>>
 
     def Function_Module( self ):
         # Variables
@@ -2631,14 +2634,15 @@ class ImagineBoard_Docker( DockWidget ):
         self.update()
 
     #endregion
-    #region Watcher ################################################################
+    #region Watcher
 
     def Watcher_Display( self ):
         try:
             image_path = self.file_path[ self.preview_index ]
             self.Filter_Keywords( self.search, image_path )
         except Exception as e:
-            self.Filter_Search()
+            if self.state_load == True:
+                self.Filter_Search()
 
     def Watcher_State( self, boolean ):
         # Blocks Imagine Board from updating to changes to the Directory while Function>> works
@@ -2682,15 +2686,18 @@ class ImagineBoard_Docker( DockWidget ):
                 self.file_system_watcher.addPath( path )
 
     #endregion
-    #region Window #################################################################
+    #region Notifier
 
-    def Window_Connect( self ):
-        # Window
+    # Notifier
+    def Window_Created( self ):
+        # Module
         self.window = Krita.instance().activeWindow()
-        if self.window != None:
-            self.window.activeViewChanged.connect( self.View_Changed )
-            self.window.themeChanged.connect( self.Theme_Changed )
-            self.window.windowClosed.connect( self.Window_Closed )
+        # Signals
+        self.window.activeViewChanged.connect( self.View_Changed )
+        self.window.themeChanged.connect( self.Theme_Changed )
+        self.window.windowClosed.connect( self.Window_Closed )
+        # Start Position
+        self.Theme_Changed()
 
     def View_Changed( self ):
         # Lists
@@ -2714,14 +2721,11 @@ class ImagineBoard_Docker( DockWidget ):
         pass
 
     #endregion
-    #region Widget Events ##########################################################
+    #region Widget Events
 
     def showEvent( self, event ):
         # Dockers
         self.Welcome_Dockers()
-        # Window
-        self.Window_Connect()
-        self.Theme_Changed()
         # Pigmento Module
         self.Import_Pigment_O()
 
@@ -2736,6 +2740,7 @@ class ImagineBoard_Docker( DockWidget ):
         if self.state_maximized != self.isMaximized():
             self.Update_Size()
     def resizeEvent( self, event ):
+        # self.Update_Size_Display()
         self.Update_Size()
     def enterEvent( self, event ):
         # Variables
@@ -2801,14 +2806,11 @@ class ImagineBoard_Docker( DockWidget ):
 
         return super().eventFilter( source, event )
 
-    #endregion
-    #region Change Canvas ##########################################################
-
     def canvasChanged( self, canvas ):
         pass
 
     #endregion
-    #region Notes ##################################################################
+    #region Notes
 
     """
     # Label Message
@@ -2903,11 +2905,9 @@ class ImagineBoard_Docker( DockWidget ):
     #endregion
 
 class Worker_Function( QObject ):
-    """
-    Run Function operation to files in Batch ( KEY ENTER = name number [ keyword ].ext )
-    """
 
-    #region Run ####################################################################
+    #region Run
+    # Run Function operation to files in Batch ( KEY ENTER = name number [ keyword ].ext )
 
     def run( self, source, mode, path_source, path_destination, file_list, operation, number, keyword, python_script ):
         # Variables
@@ -2959,7 +2959,7 @@ class Worker_Function( QObject ):
         if mode == "THREAD":source.Function_Thread_Quit()
 
     #endregion
-    #region Cycle ##################################################################
+    #region Cycle
 
     def Cycle_Operation( self, file_total, file_list, operation, number, keyword, python_script ):
         # Variables
@@ -3053,7 +3053,7 @@ class Worker_Function( QObject ):
                 self.source.dialog.function_keyword.addItem( item )
 
     #endregion
-    #region Edit ###################################################################
+    #region Edit
 
     # Keywords
     def String_Key_Add( self, path, keyword ):
@@ -3273,9 +3273,6 @@ class Worker_Function( QObject ):
     #endregion
 
 class Worker_Python( QObject ):
-    """
-    Run python script to each file in batch
-    """
 
     def run( self, python_script, image_file, path_destination ):
         # Implicit Paths
