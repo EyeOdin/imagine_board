@@ -10,11 +10,6 @@
     <height>500</height>
    </rect>
   </property>
-  <property name="font">
-   <font>
-    <family>Liberation Mono</family>
-   </font>
-  </property>
   <layout class="QVBoxLayout" name="imagineboard_widget_layout">
    <property name="spacing">
     <number>0</number>
@@ -52,7 +47,7 @@
       <number>0</number>
      </property>
      <property name="currentIndex">
-      <number>2</number>
+      <number>0</number>
      </property>
      <widget class="QWidget" name="imagine_preview">
       <layout class="QVBoxLayout" name="preview_layout">
@@ -641,13 +636,13 @@
            <property name="minimumSize">
             <size>
              <width>40</width>
-             <height>25</height>
+             <height>22</height>
             </size>
            </property>
            <property name="maximumSize">
             <size>
              <width>40</width>
-             <height>25</height>
+             <height>22</height>
             </size>
            </property>
            <property name="focusPolicy">
