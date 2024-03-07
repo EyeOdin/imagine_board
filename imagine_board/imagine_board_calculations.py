@@ -15,7 +15,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
-#region Imports ####################################################################
+#region Imports
 
 import math
 import random
@@ -24,7 +24,7 @@ from PyQt5 import QtCore
 #endregion
 
 
-#region Index ######################################################################
+#region Index
 
 # List Converter
 def preview_to_grid( preview, gmx, gmy ):
@@ -59,7 +59,7 @@ def gi_to_pi( gix, giy, gmx ):
     return pi
 
 #endregion
-#region Limiters ###################################################################
+#region Limiters
 
 def Limit_Float( value ):
     if value <= 0:
@@ -95,7 +95,7 @@ def Limit_Angle( angle, inter ):
     return angle
 
 #endregion
-#region Range ######################################################################
+#region Range
 
 def Lerp_1D( percent, bot, top ):
     delta = top - bot
@@ -115,7 +115,7 @@ def Random_Range( range ):
     return random_value
 
 #endregion
-#region Statistics #################################################################
+#region Statistics
 
 def Stat_Mean( lista ):
     length = len( lista )
@@ -126,7 +126,7 @@ def Stat_Mean( lista ):
     return mean
 
 #endregion
-#region Trignometry ################################################################
+#region Trignometry
 
 def Trig_2D_Points_Distance( x1, y1, x2, y2 ):
     dd = math.sqrt( math.pow( ( x1-x2 ),2 ) + math.pow( ( y1-y2 ),2 ) )
