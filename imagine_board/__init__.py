@@ -32,4 +32,4 @@ __url__ = ' https://github.com/EyeOdin '
 DOCKER_ID = "pykrita_imagine_board_docker"
 
 # Register Krita Docker
-Application.addDockWidgetFactory( DockWidgetFactory(DOCKER_ID, DockWidgetFactoryBase.DockRight, ImagineBoard_Docker) )
+Application.addDockWidgetFactory( DockWidgetFactory( DOCKER_ID, DockWidgetFactoryBase.DockRight, ImagineBoard_Docker ) )
