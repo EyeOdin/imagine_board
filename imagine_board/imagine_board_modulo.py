@@ -284,7 +284,7 @@ class ImagineBoard_Preview( QWidget ):
     SIGNAL_INCREMENT = QtCore.pyqtSignal( int )
     # Menu
     SIGNAL_FUNCTION = QtCore.pyqtSignal( list )
-    SIGNAL_PIN_IMAGE = QtCore.pyqtSignal( dict )
+    SIGNAL_PIN_IMAGE = QtCore.pyqtSignal( [ dict, dict ] )
     SIGNAL_RANDOM = QtCore.pyqtSignal()
     SIGNAL_FULL_SCREEN = QtCore.pyqtSignal( bool )
     SIGNAL_LOCATION = QtCore.pyqtSignal( str )
@@ -342,6 +342,7 @@ class ImagineBoard_Preview( QWidget ):
         self.cmx = 0 # Moxe X
         self.cmy = 0 # Move Y
         self.cz = 1 # Zoom
+        self.display = False
 
         # Colors
         self.color_1 = QColor( "#ffffff" )
@@ -422,6 +423,9 @@ class ImagineBoard_Preview( QWidget ):
         self.update()
     def Set_Scale_Method( self, scale_method ):
         self.scale_method = scale_method
+        self.update()
+    def Set_Display( self, boolean ):
+        self.display = boolean
         self.update()
 
     # Display
@@ -543,7 +547,12 @@ class ImagineBoard_Preview( QWidget ):
     # Draw
     def Draw_Render( self, qpixmap ):
         # QPixmap
-        draw = qpixmap.scaled( int( self.ww * self.cz ), int( self.hh * self.cz ), Qt.KeepAspectRatio, self.scale_method )
+        if self.display == False:
+            draw = qpixmap.scaled( int( self.ww * self.cz ), int( self.hh * self.cz ), Qt.KeepAspectRatio, self.scale_method )
+        else:
+            ww = qpixmap.width()
+            hh = qpixmap.height()
+            draw = qpixmap.scaled( int( ww * self.cz ), int( hh * self.cz ), Qt.KeepAspectRatio, self.scale_method )
         self.bw = draw.width()
         self.bh = draw.height()
         # Variables
@@ -925,7 +934,7 @@ class ImagineBoard_Preview( QWidget ):
 
         # General
         action_function = qmenu.addAction( "Function >> " + self.function_operation )
-        action_pin = qmenu.addAction( "Pin Reference" )
+        action_pin = qmenu.addAction( "Pin Reference" + string_clip )
         action_random = qmenu.addAction( "Random Index" )
         action_clip = qmenu.addAction( "Clip Image" )
         action_full_screen = qmenu.addAction( "Full Screen" )
@@ -1025,7 +1034,7 @@ class ImagineBoard_Preview( QWidget ):
                 "by" : self.h2,
                 "image_path" : self.preview_path,
                 }
-            self.SIGNAL_PIN_IMAGE.emit( pin )
+            self.SIGNAL_PIN_IMAGE.emit( pin, clip )
         if action == action_random:
             self.SIGNAL_RANDOM.emit()
         if action == action_clip:
@@ -1353,7 +1362,7 @@ class ImagineBoard_Grid( QWidget ):
     SIGNAL_INDEX = QtCore.pyqtSignal( int )
     # Menu
     SIGNAL_FUNCTION = QtCore.pyqtSignal( list )
-    SIGNAL_PIN_IMAGE = QtCore.pyqtSignal( dict )
+    SIGNAL_PIN_IMAGE = QtCore.pyqtSignal( [ dict, dict ] )
     SIGNAL_FULL_SCREEN = QtCore.pyqtSignal( bool )
     SIGNAL_LOCATION = QtCore.pyqtSignal( str )
     SIGNAL_ANALYSE = QtCore.pyqtSignal( [ QImage ] )
@@ -1405,6 +1414,8 @@ class ImagineBoard_Grid( QWidget ):
         # Thumbnails
         self.tw = 200
         self.th = 200
+        # Clip
+        self.clip_false = { "state" : False, "cl" : 0, "ct" : 0, "cr" : 1, "cb" : 1 }
 
         # State
         self.state_maximized = False
@@ -1711,7 +1722,7 @@ class ImagineBoard_Grid( QWidget ):
                 self.SIGNAL_FUNCTION.emit( [ grid_path ] )
             if action == action_pin:
                 pin = { "bx" : self.w2, "by" : self.h2, "image_path" : grid_path }
-                self.SIGNAL_PIN_IMAGE.emit( pin )
+                self.SIGNAL_PIN_IMAGE.emit( pin, self.clip_false )
             if action == action_full_screen:
                 self.SIGNAL_FULL_SCREEN.emit( not self.state_maximized )
 
@@ -1946,12 +1957,13 @@ class ImagineBoard_Reference( QWidget ):
     SIGNAL_DRAG = QtCore.pyqtSignal( [ str, dict ] )
     SIGNAL_DROP = QtCore.pyqtSignal( list )
     # Reference
-    SIGNAL_PIN_IMAGE = QtCore.pyqtSignal( dict )
+    SIGNAL_PIN_IMAGE = QtCore.pyqtSignal( [ dict, dict ] )
     SIGNAL_PIN_LABEL = QtCore.pyqtSignal( dict )
     SIGNAL_PIN_SAVE = QtCore.pyqtSignal( [ QPixmap ] )
     SIGNAL_BOARD_SAVE = QtCore.pyqtSignal( list )
     SIGNAL_CAMERA = QtCore.pyqtSignal( [ list, float, int ] )
     # Menu
+    SIGNAL_REFRESH = QtCore.pyqtSignal()
     SIGNAL_FULL_SCREEN = QtCore.pyqtSignal( bool )
     SIGNAL_LOCATION = QtCore.pyqtSignal( str )
     SIGNAL_ANALYSE = QtCore.pyqtSignal( [ QImage ] )
@@ -2287,7 +2299,7 @@ class ImagineBoard_Reference( QWidget ):
         url, ok = QInputDialog.getText( self, "Insert Pin", "URL", QLineEdit.Normal, "" )
         if ok and url != "":
             pin = { "bx" : bx, "by" : by, "image_path" : url }
-            self.SIGNAL_PIN_IMAGE.emit( pin )
+            self.SIGNAL_PIN_IMAGE.emit( pin, dict() )
     def Pin_Update( self ):
         for i in range( 0, self.pin_count ):
             self.pin_list[i]["index"] = i
@@ -3446,6 +3458,10 @@ class ImagineBoard_Reference( QWidget ):
             tipo = item["tipo"]
             bx = item["bx"]
             by = item["by"]
+            cl = item["cl"]
+            ct = item["ct"]
+            cw = item["cw"]
+            ch = item["ch"]
             path = item["path"]
             web = item["web"]
             qpixmap = item["qpixmap"]
@@ -3458,7 +3474,8 @@ class ImagineBoard_Reference( QWidget ):
                     fp = os.path.abspath( f.filePath() ) # path
                     if basename == fn and fp not in path_old:
                         pin = { "bx" : bx + 20, "by" : by + 20, "image_path" : fp }
-                        self.SIGNAL_PIN_IMAGE.emit( pin )
+                        clip = { "cl": cl, "ct": ct, "cw": cw, "ch": ch }
+                        self.SIGNAL_PIN_IMAGE.emit( pin, clip )
                         break
             # Selection
             if len( self.pin_list ) > count:
@@ -3718,6 +3735,7 @@ class ImagineBoard_Reference( QWidget ):
         qmenu = QMenu( self )
 
         # General
+        action_refresh = qmenu.addAction( "Refresh" )
         action_board_fit = qmenu.addAction( "Board Fit" )
         action_insert_pin = qmenu.addAction( "Insert Pin" )
         action_full_screen = qmenu.addAction( "Full Screen" )
@@ -3821,6 +3839,8 @@ class ImagineBoard_Reference( QWidget ):
             bx = event.pos().x()
             by = event.pos().y()
             self.Pin_URL( bx, by )
+        if action == action_refresh:
+            self.SIGNAL_REFRESH.emit()
         if action == action_full_screen:
             self.SIGNAL_FULL_SCREEN.emit( not self.state_maximized )
 
@@ -4110,7 +4130,7 @@ class ImagineBoard_Reference( QWidget ):
                         # Pin
                         image_path = mime_data[i]
                         pin = { "bx" : bx, "by" : by, "image_path" : image_path }
-                        self.SIGNAL_PIN_IMAGE.emit( pin )
+                        self.SIGNAL_PIN_IMAGE.emit( pin, dict() )
                     # Progress Bar
                     self.ProgressBar_Value( 0 )
                     self.ProgressBar_Maximum( 1 )

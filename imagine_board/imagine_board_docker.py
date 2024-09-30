@@ -203,6 +203,8 @@ class ImagineBoard_Docker( DockWidget ):
         self.slideshow_time = 1000
         self.slideshow_play = False
         self.slideshow_lottery = []
+        # Preview Display
+        self.preview_display = False
 
         # Grid
         self.grid_size = 200
@@ -273,6 +275,7 @@ class ImagineBoard_Docker( DockWidget ):
         # Dialog Display Preview
         self.dialog.slideshow_sequence.currentTextChanged.connect( self.Menu_SlideShow_Sequence )
         self.dialog.slideshow_time.timeChanged.connect( self.Menu_SlideShow_Time )
+        self.dialog.preview_display.toggled.connect( self.Preview_Display )
         # Dialog Display Grid
         self.dialog.grid_size.valueChanged.connect( self.Menu_Grid_Size )
         self.dialog.grid_fit.toggled.connect( self.Menu_Grid_Fit )
@@ -391,6 +394,7 @@ class ImagineBoard_Docker( DockWidget ):
         self.imagine_reference.SIGNAL_BOARD_SAVE.connect( self.File_Save_St )
         self.imagine_reference.SIGNAL_CAMERA.connect( self.Reference_Camera )
         # Menu
+        self.imagine_reference.SIGNAL_REFRESH.connect( lambda: self.File_Load( self.ref_board ) )
         self.imagine_reference.SIGNAL_FULL_SCREEN.connect( self.Screen_Maximized )
         self.imagine_reference.SIGNAL_LOCATION.connect( self.File_Location )
         self.imagine_reference.SIGNAL_ANALYSE.connect( self.Color_Analyse )
@@ -527,6 +531,7 @@ class ImagineBoard_Docker( DockWidget ):
 
         self.function_panel_drop = self.Set_Read( "EVAL", "function_panel_drop", self.function_panel_drop )
         self.function_string = self.Set_Read( "EVAL", "function_string", self.function_string  )
+        self.preview_display = self.Set_Read( "EVAL", "preview_display", self.preview_display )
 
         #endregion
         #region Dialog System
@@ -553,19 +558,6 @@ class ImagineBoard_Docker( DockWidget ):
             self.Loader()
 
     def Loader( self ):
-        #region Layout
-
-        # Folder
-        self.Folder_Load( self.folder_path, self.preview_index )
-        self.layout.search.setText( self.search )
-
-        # Board
-        self.layout.link.setChecked( self.ref_kra )
-
-        # Index
-        self.Mode_Index( self.mode_index )
-
-        #endregion
         #region Dialog Display
 
         # Item
@@ -578,6 +570,7 @@ class ImagineBoard_Docker( DockWidget ):
         self.dialog.slideshow_sequence.setCurrentText( self.slideshow_sequence )
         tempo = QTime( 0,0,0 ).addMSecs( self.slideshow_time )
         self.dialog.slideshow_time.setTime( tempo )
+        self.dialog.preview_display.setChecked( self.preview_display )
         # Grid
         self.dialog.grid_size.setValue( self.grid_size )
         self.dialog.grid_fit.setChecked( self.grid_fit )
@@ -597,6 +590,19 @@ class ImagineBoard_Docker( DockWidget ):
         self.dialog.sow_imagine.setChecked( self.sow_imagine )
         self.dialog.sow_dockers.setChecked( self.sow_dockers )
         self.dialog.transparent.setChecked( self.transparent )
+
+        #endregion
+        #region Layout
+
+        # Folder
+        self.Folder_Load( self.folder_path, self.preview_index )
+        self.layout.search.setText( self.search )
+
+        # Board
+        self.layout.link.setChecked( self.ref_kra )
+
+        # Index
+        self.Mode_Index( self.mode_index )
 
         #endregion
     def Set_Read( self, mode, entry, default ):
@@ -750,6 +756,10 @@ class ImagineBoard_Docker( DockWidget ):
     def Menu_SlideShow_Time( self, qtime ):
         self.slideshow_time = QTime( 0, 0, 0 ).msecsTo( qtime )
         Krita.instance().writeSetting( "Imagine Board", "slideshow_time", str( self.slideshow_time ) )
+    def Preview_Display( self, boolean ):
+        self.preview_display = boolean
+        self.imagine_preview.Set_Display( self.preview_display )
+        Krita.instance().writeSetting( "Imagine Board", "preview_display", str( self.preview_display ) )
     # Grid
     def Menu_Grid_Size( self, value ):
         self.grid_size = value
@@ -1173,7 +1183,8 @@ class ImagineBoard_Docker( DockWidget ):
     def Insert_Document( self, image_path, clip ):
         if image_path not in ( "", None ):
             # Create Document
-            document = Krita.instance().openDocument( image_path )
+            ki = Krita.instance()
+            document = ki.openDocument( image_path )
             Application.activeWindow().addView( document )
             w = document.width()
             h = document.height()
@@ -1789,25 +1800,44 @@ class ImagineBoard_Docker( DockWidget ):
         pass
 
     # Pin
-    def Pin_Image( self, pin ):
+    def Pin_Image( self, pin, clip ):
         image_path = pin["image_path"]
         check_html = self.Check_Html( image_path )
+
         if check_html == True:
-            self.Pin_Insert( tipo="image", bx=pin["bx"], by=pin["by"], text=None, path=None, web=image_path )
+            clip[ "state" ] = False
+            self.Pin_Insert( tipo="image", bx=pin["bx"], by=pin["by"], text=None, path=None, web=image_path, clip=clip )
         else:
-            self.Pin_Insert( tipo="image", bx=pin["bx"], by=pin["by"], text=None, path=image_path, web=None )
+            self.Pin_Insert( tipo="image", bx=pin["bx"], by=pin["by"], text=None, path=image_path, web=None, clip=clip )
     def Pin_Label( self, pin ):
-        self.Pin_Insert( tipo="label", bx=pin["bx"], by=pin["by"], text="Text", path=None, web=None )
-    def Pin_Insert( self, tipo, bx, by, text, path, web ):
+        self.Pin_Insert( tipo="label", bx=pin["bx"], by=pin["by"], text="Text", path=None, web=None, clip=None )
+    def Pin_Insert( self, tipo, bx, by, text, path, web, clip ):
         # Variables
         width = 0
         height = 0
+        # Clip
+        if clip["state"] == True:
+            cl = clip["cl"]
+            ct = clip["ct"]
+            cw = clip["cw"]
+            ch = clip["ch"]
+        else:
+            cl = 0
+            ct = 0
+            cw = 1
+            ch = 1
 
         # Image
         if tipo == "image" and path != None:
             path = os.path.abspath( path )
             qpixmap = QPixmap( path )
             if qpixmap.isNull() == False:
+                # Size
+                width = int( qpixmap.width() )
+                height = int( qpixmap.height() )
+                # Clip
+                qpixmap = qpixmap.copy( int(width*cl), int(height*ct), int(width*cw), int(height*ch) )
+                # Size
                 width = int( qpixmap.width() )
                 height = int( qpixmap.height() )
         if tipo == "image" and web != None:
@@ -1850,14 +1880,6 @@ class ImagineBoard_Docker( DockWidget ):
             bb = int( by + h2 )
             bw = int( abs( br - bl ) )
             bh = int( abs( bb - bt ) )
-
-            # Clip
-            cl = 0
-            cr = 1
-            ct = 0
-            cb = 1
-            cw = 1
-            ch = 1
 
             # ID
             index = len( self.list_reference )
@@ -1920,9 +1942,7 @@ class ImagineBoard_Docker( DockWidget ):
                 "bh"         : bh, # float ( height )
                 # Clip
                 "cl"         : cl, # float
-                "cr"         : cr, # float
                 "ct"         : ct, # float
-                "cb"         : cb, # float
                 "cw"         : cw, # float
                 "ch"         : ch, # float
                 # Dimensions
@@ -2210,23 +2230,29 @@ class ImagineBoard_Docker( DockWidget ):
                             ref_zoom = float( line[n:] )
                         else: # Pin
                             line = eval( line )
+                            # Clip
+                            cl = line["cl"]
+                            ct = line["ct"]
+                            cw = line["cw"]
+                            ch = line["ch"]
                             # QPixmap
                             path = line["path"]
                             url = line["web"]
                             zdata = line["zdata"]
+                            # Load
                             if path != None: # Local
                                 qpixmap = QPixmap( path )
-                                if qpixmap.isNull() == False:
-                                    line["qpixmap"] = qpixmap
                             elif url != None: # Internet
                                 qpixmap = self.Download_QPixmap( url )
-                                if qpixmap.isNull() == False:
-                                    line["qpixmap"] = qpixmap
                             elif zdata != None: # Import
                                 qpixmap = QPixmap()
                                 qpixmap.loadFromData( zdata )
-                                if qpixmap.isNull() == False:
-                                    line["qpixmap"] = qpixmap
+                            # Clip
+                            if qpixmap.isNull() == False:
+                                w = qpixmap.width()
+                                h = qpixmap.height()
+                                qpixmap = qpixmap.copy( int(w*cl), int(h*ct), int(w*cw), int(h*ch) )
+                                line["qpixmap"] = qpixmap
                             lista.append( line )
                     except:
                         pass
@@ -2972,85 +2998,187 @@ class Worker_Function( QObject ):
         if "SAVE" in operation:
             operation_type = "save"
 
-        # Cycle
-        for i in range( 0, file_total ):
-            # Count
-            index = i + 1
-            numi = number + i
-
-            # New String
-            path = file_list[i]
-            path_new = None
-
-            # Key
-            if operation == "KEY_ADD":
+        # Operation
+        if operation == "KEY_ADD":
+            for i in range( 0, file_total ):
+                # Variables
+                index = i + 1
+                path = file_list[i]
+                path_new = None
+                # New String
                 path_new = self.String_Key_Add( path, keyword )
-            if operation == "KEY_REPLACE":
+                self.Cycle_Action( operation_type, path, path_new, index, file_total, found )
+        if operation == "KEY_REPLACE":
+            for i in range( 0, file_total ):
+                # Variables
+                index = i + 1
+                path = file_list[i]
+                path_new = None
+                # New String
                 path_new = self.String_Key_Replace( path, keyword )
-            if operation == "KEY_REMOVE":
+                self.Cycle_Action( operation_type, path, path_new, index, file_total, found )
+        if operation == "KEY_REMOVE":
+            for i in range( 0, file_total ):
+                # Variables
+                index = i + 1
+                path = file_list[i]
+                path_new = None
+                # New String
                 path_new = self.String_Key_Remove( path, keyword )
-            if operation == "KEY_CLEAN":
+                self.Cycle_Action( operation_type, path, path_new, index, file_total, found )
+        if operation == "KEY_CLEAN":
+            for i in range( 0, file_total ):
+                # Variables
+                index = i + 1
+                path = file_list[i]
+                path_new = None
+                # New String
                 path_new = self.String_Key_Clean( path )
-            # Rename
-            if operation == "RENAME_ORDER":
+                self.Cycle_Action( operation_type, path, path_new, index, file_total, found )
+        # Rename
+        if operation == "RENAME_ORDER":
+            for i in range( 0, file_total ):
+                # Variables
+                index = i + 1
+                numi = number + i
+                path = file_list[i]
+                path_new = None
+                # New String
                 path_new = self.String_Rename_Order( path, keyword, numi )
                 self.source.dialog.function_number.setValue( numi + 1 )
-            # Save
-            if self.path_destination != None:
-                if operation == "SAVE_ORDER":
+                self.Cycle_Action( operation_type, path, path_new, index, file_total, found )
+        # Save
+        if self.path_destination != None:
+            if operation == "SAVE_ORDER":
+                for i in range( 0, file_total ):
+                    # Variables
+                    index = i + 1
+                    numi = number + i
+                    path = file_list[i]
+                    path_new = None
+                    # New String
                     path_new = self.String_Save_Order( path, keyword, numi )
                     self.source.dialog.function_number.setValue( numi + 1 )
-                if operation == "SAVE_ORIGINAL":
+                    self.Cycle_Action( operation_type, path, path_new, index, file_total, found )
+            if operation == "SAVE_ORIGINAL":
+                for i in range( 0, file_total ):
+                    # Variables
+                    index = i + 1
+                    path = file_list[i]
+                    path_new = None
+                    # New String
                     keyword = os.path.basename( path )
                     path_new = self.String_Save_Original( path, keyword )
-            # Search
-            if operation == "SEARCH_KEY":
-                key = self.String_Search_Key( path )
-                if key != None:collection.extend( key )
-            if operation == "SEARCH_NULL":
-                path_new, found = self.String_Search_Null( path, found )
-            if operation == "SEARCH_COPY":
-                path_new, found = self.String_Search_Copy( path, found, file_list, i )
-                if path_new != None:file_list[i] = path_new
-            # Python
-            if operation == "PYTHON_SCRIPT":
-                self.String_Python_Script( python_script, path, self.path_destination )
-
-            # Action
-            if path_new != None:
-                # Exists
-                exists = os.path.exists( path_new )
-                if ( path != path_new and exists == False ):
-                    if operation_type == "rename":
-                        boolean = self.qfile.rename( path, path_new )
-                        if boolean == True:
-                            try:QtCore.qDebug( f"Imagine Board | RENAME { os.path.basename( path ) } >> { os.path.basename( path_new ) }" )
-                            except:pass
-                    if operation_type == "save":
-                        qpixmap = QPixmap( path )
-                        if qpixmap.isNull() == True:
-                            response = urllib.request.urlopen( path )
-                            data = response.read()
-                            qpixmap = QPixmap()
-                            qpixmap.loadFromData( data )
-                        boolean = qpixmap.save( path_new )
-                        if boolean == True:
-                            try:QtCore.qDebug( f"Imagine Board | SAVE { path_new }" )
-                            except:pass
-                # Anchor Find
-                if path == self.anchor_path:
-                    self.anchor_new = path_new
-
-            # Feedback
-            self.Progress_String( index, file_total, found )
-            self.source.dialog.progress.setValue( index )
-            QApplication.processEvents()
-
+                    self.Cycle_Action( operation_type, path, path_new, index, file_total, found )
+        # Search
         if operation == "SEARCH_KEY":
+            for i in range( 0, file_total ):
+                # Variables
+                index = i + 1
+                path = file_list[i]
+                path_new = None
+                # New String
+                key = self.String_Search_Key( path )
+                if key != None:
+                    collection.extend( key )
+                self.Cycle_Action( operation_type, path, path_new, index, file_total, found )
+
+            # Collection
             collection = list( set( collection ) )
             collection.sort()
             for item in collection:
                 self.source.dialog.function_keyword.addItem( item )
+        if operation == "SEARCH_NULL":
+            for i in range( 0, file_total ):
+                # Variables
+                index = i + 1
+                path = file_list[i]
+                path_new = None
+                # New String
+                path_new, found = self.String_Search_Null( path, found )
+                self.Cycle_Action( operation_type, path, path_new, index, file_total, found )
+        if operation == "SEARCH_COPY":
+            self.Cycle_Search( operation_type, file_total, file_list, found )
+
+        # Python
+        if operation == "PYTHON_SCRIPT":
+            self.String_Python_Script( python_script, path, self.path_destination )
+            self.Cycle_Action( operation_type, path, path_new, index, file_total, found )
+    def Cycle_Search( self, operation_type, file_total, file_list, found ):
+        # Variabels
+        copy = " [ copy ]"
+
+        # Search
+        for i in range( 0, file_total - 1 ):
+            # Variables
+            index = i + 2
+
+            # File
+            file_i = file_list[i]
+            if copy not in file_i:
+                qimage_i = QImageReader( file_i ).read()
+
+                # Cycle
+                for j in range( i + 1, file_total ):
+                    # File
+                    file_j = file_list[j]
+                    if copy not in file_j:
+                        qimage_j = QImageReader( file_j ).read()
+
+                        # Check QImages
+                        path_new = None
+                        check = qimage_i == qimage_j
+                        if check == True:
+                            # Found
+                            found += 1
+                            # String Components
+                            directory, basename, name, extension = self.Path_Components( file_j )
+                            # construct keywords
+                            a = name.rfind( " [ " )
+                            b = name.rfind( " ]" )
+                            if ( a >= 0 and b >= 0 and a < b ): # Keys Exist
+                                name = name[:a]
+                            # Create new path name
+                            basename_new = f"{ name } [ copy ]{ extension }"
+                            path_new = os.path.join( directory, basename_new )
+
+                        # Feedback
+                        if path_new != None:
+                            file_list[i] = path_new
+                        self.Cycle_Action( operation_type, file_j, path_new, index, file_total, found )
+
+                    del qimage_j
+                del qimage_i
+    def Cycle_Action( self, operation_type, path, path_new, index, file_total, found ):
+        # Action
+        if path_new != None:
+            # Exists
+            exists = os.path.exists( path_new )
+            if ( path != path_new and exists == False ):
+                if operation_type == "rename":
+                    boolean = self.qfile.rename( path, path_new )
+                    if boolean == True:
+                        try:QtCore.qDebug( f"Imagine Board | RENAME { os.path.basename( path ) } >> { os.path.basename( path_new ) }" )
+                        except:pass
+                if operation_type == "save":
+                    qpixmap = QPixmap( path )
+                    if qpixmap.isNull() == True:
+                        response = urllib.request.urlopen( path )
+                        data = response.read()
+                        qpixmap = QPixmap()
+                        qpixmap.loadFromData( data )
+                    boolean = qpixmap.save( path_new )
+                    if boolean == True:
+                        try:QtCore.qDebug( f"Imagine Board | SAVE { path_new }" )
+                        except:pass
+            # Anchor Find
+            if path == self.anchor_path:
+                self.anchor_new = path_new
+
+        # Feedback
+        self.Progress_String( index, file_total, found )
+        self.source.dialog.progress.setValue( index )
+        QApplication.processEvents()
 
     #endregion
     #region Edit
@@ -3226,31 +3354,7 @@ class Worker_Function( QObject ):
             path_new = os.path.join( directory, basename_new )
         # Return
         return path_new, found
-    def String_Search_Copy( self, path, found, compare, index ):
-        path_new = None
-        qimage_i = QImageReader( path ).read()
-        for c in range( 0, index ):
-            qimage_c = QImageReader( compare[c] ).read()
-            check = qimage_i == qimage_c
-            if check == True:
-                # Found
-                found += 1
-                # String Components
-                directory, basename, name, extension = self.Path_Components( path )
-                # construct keywords
-                a = name.rfind( " [ " )
-                b = name.rfind( " ]" )
-                if ( a >= 0 and b >= 0 and a < b ): # Keys Exist
-                    name = name[:a]
-                # Create new path name
-                basename_new = f"{ name } [ copy ]{ extension }"
-                path_new = os.path.join( directory, basename_new )
-                # Cycle
-                del qimage_c
-                break
-            del qimage_c
-        del qimage_i
-        return path_new, found
+
     # Python
     def String_Python_Script( self, python_script, path, path_destination ):
         worker_python = Worker_Python()
@@ -3288,4 +3392,12 @@ class Worker_Python( QObject ):
 """
 Known Krita Bugs:
 - Importing reference with alpha crops image size
+
+NEW :
+- Reference mode context menu "Refresh"
+- Reference Pin accepts clipped images from Preview mode
+- Preview mode displays things in original size only
+- Folder load now initializes correctly with different sorting methods.
+- Fixed bug : from PReview mode sending a pin to reference mode will always crop the image regardless of the clip state.
+
 """
