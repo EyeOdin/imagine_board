@@ -2194,6 +2194,9 @@ class ImagineBoard_Reference( QWidget ):
         self.function_drop_panel = False
         self.function_operation = ""
 
+        # Clip
+        self.clip_false = { "state" : False, "cl" : 0, "ct" : 0, "cr" : 1, "cb" : 1 }
+
         # Debug Packer Points
         # self.p = []
     def sizeHint( self ):
@@ -2299,7 +2302,7 @@ class ImagineBoard_Reference( QWidget ):
         url, ok = QInputDialog.getText( self, "Insert Pin", "URL", QLineEdit.Normal, "" )
         if ok and url != "":
             pin = { "bx" : bx, "by" : by, "image_path" : url }
-            self.SIGNAL_PIN_IMAGE.emit( pin, dict() )
+            self.SIGNAL_PIN_IMAGE.emit( pin, self.clip_false )
     def Pin_Update( self ):
         for i in range( 0, self.pin_count ):
             self.pin_list[i]["index"] = i
@@ -4130,7 +4133,7 @@ class ImagineBoard_Reference( QWidget ):
                         # Pin
                         image_path = mime_data[i]
                         pin = { "bx" : bx, "by" : by, "image_path" : image_path }
-                        self.SIGNAL_PIN_IMAGE.emit( pin, dict() )
+                        self.SIGNAL_PIN_IMAGE.emit( pin, self.clip_false )
                     # Progress Bar
                     self.ProgressBar_Value( 0 )
                     self.ProgressBar_Maximum( 1 )
