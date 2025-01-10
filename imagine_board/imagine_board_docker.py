@@ -289,6 +289,7 @@ class ImagineBoard_Docker( DockWidget ):
         # Dialog Function> Options
         self.dialog.function_panel_drop.toggled.connect( self.Function_Panel_Drop )
         self.dialog.function_operation.currentTextChanged.connect( self.Function_Operation )
+        self.dialog.function_menu.clicked.connect( self.Function_Reset )
         self.dialog.function_string.returnPressed.connect( self.Function_String_Add )
         self.dialog.function_number.valueChanged.connect( self.Function_Number )
         self.dialog.function_keyword.itemPressed.connect( self.Function_String_List )
@@ -1189,7 +1190,7 @@ class ImagineBoard_Docker( DockWidget ):
             w = document.width()
             h = document.height()
             # Crop
-            if clip["state"] == True:
+            if clip["cstate"] == True:
                 ad = Krita.instance().activeDocument()
                 ad.crop( int( w * clip["cl"] ), int( h * clip["ct"] ), int( w * clip["cw"] ), int( h * clip["ch"] ) )
                 ad.waitForDone()
@@ -1272,7 +1273,7 @@ class ImagineBoard_Docker( DockWidget ):
     def Image_Clip( self, image_path, clip ):
         qimage = QImage( image_path )
         if qimage.isNull() == False:
-            if clip["state"] == True:
+            if clip["cstate"] == True:
                 w = qimage.width()
                 h = qimage.height()
                 qimage = qimage.copy( int( w * clip["cl"] ), int( h * clip["ct"] ), int( w * clip["cw"] ), int( h * clip["ch"] ) )
@@ -1805,23 +1806,26 @@ class ImagineBoard_Docker( DockWidget ):
         check_html = self.Check_Html( image_path )
 
         if check_html == True:
-            clip[ "state" ] = False
+            clip[ "cstate" ] = False
             self.Pin_Insert( tipo="image", bx=pin["bx"], by=pin["by"], text=None, path=None, web=image_path, clip=clip )
         else:
             self.Pin_Insert( tipo="image", bx=pin["bx"], by=pin["by"], text=None, path=image_path, web=None, clip=clip )
     def Pin_Label( self, pin ):
-        self.Pin_Insert( tipo="label", bx=pin["bx"], by=pin["by"], text="Text", path=None, web=None, clip=None )
+        clip_none = { "cstate":False, "cl":0, "cr":0, "cw":1, "ch":1 }
+        self.Pin_Insert( tipo="label", bx=pin["bx"], by=pin["by"], text="Text", path=None, web=None, clip=clip_none )
     def Pin_Insert( self, tipo, bx, by, text, path, web, clip ):
         # Variables
         width = 0
         height = 0
         # Clip
-        if clip["state"] == True:
+        if clip["cstate"] == True:
+            cstate = clip["cstate"]
             cl = clip["cl"]
             ct = clip["ct"]
             cw = clip["cw"]
             ch = clip["ch"]
         else:
+            cstate = False
             cl = 0
             ct = 0
             cw = 1
@@ -1941,6 +1945,7 @@ class ImagineBoard_Docker( DockWidget ):
                 "bw"         : bw, # float ( width )
                 "bh"         : bh, # float ( height )
                 # Clip
+                "cstate"     : cstate, # bool
                 "cl"         : cl, # float
                 "ct"         : ct, # float
                 "cw"         : cw, # float
@@ -2553,11 +2558,13 @@ class ImagineBoard_Docker( DockWidget ):
         if ( "ORIGINAL" not in operation and "CLEAN" not in operation ):
             if operation.startswith( ( "KEY", "RENAME", "SAVE" ) ) == True:
                 request += "S"
-            if "ORDER" in operation:
+            if ( "ORDER" in operation or "COPY" in operation ):
                 request += " N"
         if "PYTHON" in operation:
             request += "PY"
         self.dialog.function_menu.setText( request )
+    def Function_Reset( self ):
+        self.dialog.function_operation.setCurrentIndex( 0 )
     def Function_Number( self, number ):
         self.function_number = number
 
@@ -2787,6 +2794,11 @@ class ImagineBoard_Docker( DockWidget ):
         self.pigment_o_module = None
         # Lists
         self.Function_String_List()
+        # Threads
+        try:
+            self.thread_function.quit()
+        except:
+            pass
 
     def eventFilter( self, source, event ):
         # Widgets
@@ -3098,87 +3110,93 @@ class Worker_Function( QObject ):
                 path_new, found = self.String_Search_Null( path, found )
                 self.Cycle_Action( operation_type, path, path_new, index, file_total, found )
         if operation == "SEARCH_COPY":
-            self.Cycle_Search( operation_type, file_total, file_list, found )
+            self.Cycle_Search( number, operation_type, file_total, file_list, found )
 
         # Python
         if operation == "PYTHON_SCRIPT":
             self.String_Python_Script( python_script, path, self.path_destination )
             self.Cycle_Action( operation_type, path, path_new, index, file_total, found )
-    def Cycle_Search( self, operation_type, file_total, file_list, found ):
+    def Cycle_Search( self, number, operation_type, file_total, file_list, found ):
         # Variabels
         copy = " [ copy ]"
 
         # Search
-        for i in range( 0, file_total - 1 ):
-            # Variables
-            index = i + 2
+        if number < file_total:
+            for i in range( number, file_total - 1 ):
+                # Variables
+                index = i + 2
 
-            # File
-            file_i = file_list[i]
-            if copy not in file_i:
-                qimage_i = QImageReader( file_i ).read()
+                # File
+                file_i = file_list[i]
+                if copy not in file_i:
+                    qimage_i = QImageReader( file_i ).read()
 
-                # Cycle
-                for j in range( i + 1, file_total ):
-                    # File
-                    file_j = file_list[j]
-                    if copy not in file_j:
-                        qimage_j = QImageReader( file_j ).read()
+                    # Cycle
+                    for j in range( i + 1, file_total ):
+                        # File
+                        file_j = file_list[j]
+                        if copy not in file_j:
+                            qimage_j = QImageReader( file_j ).read()
 
-                        # Check QImages
-                        path_new = None
-                        check = qimage_i == qimage_j
-                        if check == True:
-                            # Found
-                            found += 1
-                            # String Components
-                            directory, basename, name, extension = self.Path_Components( file_j )
-                            # construct keywords
-                            a = name.rfind( " [ " )
-                            b = name.rfind( " ]" )
-                            if ( a >= 0 and b >= 0 and a < b ): # Keys Exist
-                                name = name[:a]
-                            # Create new path name
-                            basename_new = f"{ name } [ copy ]{ extension }"
-                            path_new = os.path.join( directory, basename_new )
+                            # Check QImages
+                            path_new = None
+                            check = qimage_i == qimage_j
+                            if check == True:
+                                # Found
+                                found += 1
+                                # String Components
+                                directory, basename, name, extension = self.Path_Components( file_j )
+                                # construct keywords
+                                a = name.rfind( " [ " )
+                                b = name.rfind( " ]" )
+                                if ( a >= 0 and b >= 0 and a < b ): # Keys Exist
+                                    name = name[:a]
+                                # Create new path name
+                                basename_new = f"{ name } [ copy ]{ extension }"
+                                path_new = os.path.join( directory, basename_new )
 
-                        # Feedback
-                        if path_new != None:
-                            file_list[i] = path_new
-                        self.Cycle_Action( operation_type, file_j, path_new, index, file_total, found )
+                            # Feedback
+                            if path_new != None:
+                                file_list[i] = path_new
+                            self.Cycle_Action( operation_type, file_j, path_new, index, file_total, found )
 
-                    del qimage_j
-                del qimage_i
+                        del qimage_j
+                    del qimage_i
+        else:
+            pass
     def Cycle_Action( self, operation_type, path, path_new, index, file_total, found ):
-        # Action
-        if path_new != None:
-            # Exists
-            exists = os.path.exists( path_new )
-            if ( path != path_new and exists == False ):
-                if operation_type == "rename":
-                    boolean = self.qfile.rename( path, path_new )
-                    if boolean == True:
-                        try:QtCore.qDebug( f"Imagine Board | RENAME { os.path.basename( path ) } >> { os.path.basename( path_new ) }" )
-                        except:pass
-                if operation_type == "save":
-                    qpixmap = QPixmap( path )
-                    if qpixmap.isNull() == True:
-                        response = urllib.request.urlopen( path )
-                        data = response.read()
-                        qpixmap = QPixmap()
-                        qpixmap.loadFromData( data )
-                    boolean = qpixmap.save( path_new )
-                    if boolean == True:
-                        try:QtCore.qDebug( f"Imagine Board | SAVE { path_new }" )
-                        except:pass
-            # Anchor Find
-            if path == self.anchor_path:
-                self.anchor_new = path_new
+        try:
+            # Action
+            if path_new != None:
+                # Exists
+                exists = os.path.exists( path_new )
+                if ( path != path_new and exists == False ):
+                    if operation_type == "rename":
+                        boolean = self.qfile.rename( path, path_new )
+                        if boolean == True:
+                            try:QtCore.qDebug( f"Imagine Board | RENAME { os.path.basename( path ) } >> { os.path.basename( path_new ) }" )
+                            except:pass
+                    if operation_type == "save":
+                        qpixmap = QPixmap( path )
+                        if qpixmap.isNull() == True:
+                            response = urllib.request.urlopen( path )
+                            data = response.read()
+                            qpixmap = QPixmap()
+                            qpixmap.loadFromData( data )
+                        boolean = qpixmap.save( path_new )
+                        if boolean == True:
+                            try:QtCore.qDebug( f"Imagine Board | SAVE { path_new }" )
+                            except:pass
+                # Anchor Find
+                if path == self.anchor_path:
+                    self.anchor_new = path_new
 
-        # Feedback
-        self.Progress_String( index, file_total, found )
-        self.source.dialog.progress.setValue( index )
-        QApplication.processEvents()
+            # Feedback
+            self.Progress_String( index, file_total, found )
+            self.source.dialog.progress.setValue( index )
+            QApplication.processEvents()
+        except:
+            pass
 
     #endregion
     #region Edit

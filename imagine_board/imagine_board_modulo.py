@@ -916,7 +916,7 @@ class ImagineBoard_Preview( QWidget ):
 
         # Clip
         clip = { 
-            "state" : self.state_clip,
+            "cstate" : self.state_clip,
             "cl": self.cl,
             "ct": self.ct,
             "cw": self.cw,
@@ -1166,7 +1166,7 @@ class ImagineBoard_Preview( QWidget ):
         # Drag Drop
         if self.operation == "drag_drop":
             clip = { 
-                "state" : self.state_clip,
+                "cstate" : self.state_clip,
                 "cl": self.cl,
                 "ct": self.ct,
                 "cw": self.cw,
@@ -1415,7 +1415,7 @@ class ImagineBoard_Grid( QWidget ):
         self.tw = 200
         self.th = 200
         # Clip
-        self.clip_false = { "state" : False, "cl" : 0, "ct" : 0, "cr" : 1, "cb" : 1 }
+        self.clip_false = { "cstate" : False, "cl" : 0, "ct" : 0, "cr" : 1, "cb" : 1 }
 
         # State
         self.state_maximized = False
@@ -1655,7 +1655,7 @@ class ImagineBoard_Grid( QWidget ):
         grid_path = self.grid_path[self.giy][self.gix]
         grid_qpixmap = self.grid_qpixmap[self.giy][self.gix]
         # Clip
-        clip = { "state" : False, "cl": 0, "ct": 0, "cw": 1, "ch": 1 }
+        clip = { "cstate" : False, "cl": 0, "ct": 0, "cw": 1, "ch": 1 }
         # Cursor
         Cursor_Icon( self )
 
@@ -1821,7 +1821,7 @@ class ImagineBoard_Grid( QWidget ):
         # Drag Drop
         if self.operation == "drag_drop":
             path = self.grid_path[self.giy][self.gix]
-            clip = { "state" : False, "cl": 0, "ct": 0, "cw": 1, "ch": 1 }
+            clip = { "cstate" : False, "cl": 0, "ct": 0, "cw": 1, "ch": 1 }
             Insert_Drag( self, path, clip )
 
         # Update
@@ -2195,7 +2195,7 @@ class ImagineBoard_Reference( QWidget ):
         self.function_operation = ""
 
         # Clip
-        self.clip_false = { "state" : False, "cl" : 0, "ct" : 0, "cr" : 1, "cb" : 1 }
+        self.clip_false = { "cstate" : False, "cl" : 0, "ct" : 0, "cr" : 1, "cb" : 1 }
 
         # Debug Packer Points
         # self.p = []
@@ -2531,6 +2531,7 @@ class ImagineBoard_Reference( QWidget ):
         pin = {
             "bx" : bx,
             "by" : by,
+            "cstate" : None,
             }
         self.SIGNAL_PIN_LABEL.emit( pin )
     def Label_List( self ):
@@ -3461,6 +3462,7 @@ class ImagineBoard_Reference( QWidget ):
             tipo = item["tipo"]
             bx = item["bx"]
             by = item["by"]
+            cstate = item["cstate"]
             cl = item["cl"]
             ct = item["ct"]
             cw = item["cw"]
@@ -3468,16 +3470,19 @@ class ImagineBoard_Reference( QWidget ):
             path = item["path"]
             web = item["web"]
             qpixmap = item["qpixmap"]
-            if path != None:basename = os.path.basename( path )
-            elif web != None:basename = os.path.split( urllib.parse.urlparse( web ).path )[1]
-            else:basename = None
+            if path != None:
+                basename = os.path.basename( path )
+            elif web != None:
+                basename = os.path.split( urllib.parse.urlparse( web ).path )[1]
+            else:
+                basename = None
             if ( tipo == "image" and qpixmap == None ):
                 for f in files:
                     fn = f.fileName() # basename
                     fp = os.path.abspath( f.filePath() ) # path
                     if basename == fn and fp not in path_old:
                         pin = { "bx" : bx + 20, "by" : by + 20, "image_path" : fp }
-                        clip = { "cl": cl, "ct": ct, "cw": cw, "ch": ch }
+                        clip = { "cstate":cstate, "cl":cl, "ct":ct, "cw":cw, "ch":ch }
                         self.SIGNAL_PIN_IMAGE.emit( pin, clip )
                         break
             # Selection
@@ -3724,7 +3729,7 @@ class ImagineBoard_Reference( QWidget ):
 
         # Clip
         clip = { 
-            "state" : False,
+            "cstate" : False,
             "cl": 0,
             "ct": 0,
             "cw": 1,
@@ -4018,7 +4023,7 @@ class ImagineBoard_Reference( QWidget ):
 
         if self.operation == "drag_drop":
             clip = { 
-                "state" : False,
+                "cstate" : False,
                 "cl": 0,
                 "ct": 0,
                 "cw": 1,
