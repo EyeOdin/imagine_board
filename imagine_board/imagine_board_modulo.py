@@ -59,32 +59,28 @@ def Painter_Triangle( self, painter, w2, h2, side ):
     kh = 0.2 * side
     d = 0.5
     # Polygons
-    if self.function_drop_panel == False:
-        poly_tri = QPolygon( [
-            QPoint( int( w2 - kw ), int( h2 - kh ) ),
-            QPoint( int( w2 + kw ), int( h2 - kh ) ),
-            QPoint( int( w2 ),      int( h2 + kh ) ),
-            ] )
-        painter.drawPolygon( poly_tri )
-    if self.function_drop_panel == True:
-        arrow_left = QPolygon( [
-            QPoint( int( w2 - kw * d ),     int( h2 - kh ) ),
-            QPoint( int( w2 ),              int( h2 ) ),
-            QPoint( int( w2 - kw * d ),     int( h2 + kh ) ),
-            QPoint( int( w2 - kw ),         int( h2 + kh ) ),
-            QPoint( int( w2 - kw * d ),     int( h2 ) ),
-            QPoint( int( w2 - kw ),         int( h2 - kh ) ),
-            ] )
-        arrow_right = QPolygon( [
-            QPoint( int( w2 + kw * d ),     int( h2 - kh ) ),
-            QPoint( int( w2 + kw ),         int( h2 ) ),
-            QPoint( int( w2 + kw * d ),     int( h2 + kh ) ),
-            QPoint( int( w2 ),              int( h2 + kh ) ),
-            QPoint( int( w2 + kw * d ),     int( h2 ) ),
-            QPoint( int( w2 ),              int( h2 - kh ) ),
-            ] )
-        painter.drawPolygon( arrow_left )
-        painter.drawPolygon( arrow_right )
+    poly_tri = QPolygon( [
+        QPoint( int( w2 - kw ), int( h2 - kh ) ),
+        QPoint( int( w2 + kw ), int( h2 - kh ) ),
+        QPoint( int( w2 ),      int( h2 + kh ) ),
+        ] )
+    painter.drawPolygon( poly_tri )
+def Painter_Locked( self, painter, w2, h2, side ):
+    # Painter
+    painter.setPen( QtCore.Qt.NoPen )
+    painter.setBrush( QBrush( QColor( self.color_1 ) ) )
+    # Variables
+    kw = 0.3 * side
+    kh = 0.2 * side
+    d = 0.5
+    # Polygons
+    bar = QPolygon( [
+        QPoint( int( w2 - kw ), int( h2 - kh * d ) ),
+        QPoint( int( w2 + kw ), int( h2 - kh * d ) ),
+        QPoint( int( w2 + kw ), int( h2 + kh * d ) ),
+        QPoint( int( w2 - kw ), int( h2 + kh * d ) ),
+        ] )
+    painter.drawPolygon( bar )
 
 # Display
 def Display_Icon( self, name ):
@@ -115,7 +111,7 @@ def Insert_Drag( self, path, clip ):
         self.drag = True
         self.SIGNAL_DRAG.emit( path, clip )
 # Drop
-def Drop_Inside( self, event ):
+def Drop_Inside( self, event, local_only ):
     # Mimedata
     mimedata = event.mimeData()
 
@@ -135,14 +131,16 @@ def Drop_Inside( self, event ):
 
     # Construct Mime Data
     mime_data = []
-    if has_text == True and has_html == True and has_image == True:
-        mime_data.append( data_text )
-    else:
+    if ( has_text == True and has_html == True ):
+        if local_only == False:
+            mime_data.append( data_text )
+    elif ( has_text == True and has_html == False ):
         for i in range( 0, len( data_urls ) ):
-            url = os.path.abspath ( data_urls[i].toLocalFile() ) # Local File
-            exists = os.path.exists( url )
+            qurl = data_urls[i].toLocalFile()
+            exists = os.path.exists( qurl )
             if exists == True:
-                mime_data.append( url )
+                mime_data.append( qurl )
+
     # Sort
     if len( mime_data ) > 0:
         mime_data.sort()
@@ -351,7 +349,6 @@ class ImagineBoard_Preview( QWidget ):
         self.color_clip = QColor( 0, 0, 0, 100 )
 
         # Function>>
-        self.function_drop_panel = False
         self.function_operation = ""
 
         # Edit
@@ -417,8 +414,7 @@ class ImagineBoard_Preview( QWidget ):
         self.h2 = hh * 0.5
         self.state_maximized = state_maximized
         self.resize( ww, hh )
-    def Set_Function( self, function_drop_panel, function_operation ):
-        self.function_drop_panel = function_drop_panel
+    def Set_Function( self, function_operation ):
         self.function_operation = function_operation
         self.update()
     def Set_Scale_Method( self, scale_method ):
@@ -1222,7 +1218,7 @@ class ImagineBoard_Preview( QWidget ):
         if event.mimeData().hasImage:
             if ( self.drop == True and self.drag == False ):
                 event.setDropAction( Qt.CopyAction )
-                mime_data = Drop_Inside( self, event )
+                mime_data = Drop_Inside( self, event, False )
                 self.SIGNAL_DROP.emit( mime_data )
             event.accept()
         else:
@@ -1433,7 +1429,6 @@ class ImagineBoard_Grid( QWidget ):
         self.color_alpha = QColor( 0, 0, 0, 50 )
 
         # Function>>
-        self.function_drop_panel = False
         self.function_operation = ""
 
         # Color Picker
@@ -1465,8 +1460,7 @@ class ImagineBoard_Grid( QWidget ):
         self.state_maximized = state_maximized
         self.resize( ww, hh )
         self.Render_Matrix()
-    def Set_Function( self, function_drop_panel, function_operation ):
-        self.function_drop_panel = function_drop_panel
+    def Set_Function( self, function_operation ):
         self.function_operation = function_operation
         self.update()
     def Set_Scale_Method( self, scale_method ):
@@ -1869,7 +1863,7 @@ class ImagineBoard_Grid( QWidget ):
         if event.mimeData().hasImage:
             if ( self.drop == True and self.drag == False ):
                 event.setDropAction( Qt.CopyAction )
-                mime_data = Drop_Inside( self, event )
+                mime_data = Drop_Inside( self, event, False )
                 self.SIGNAL_DROP.emit( mime_data )
             event.accept()
         else:
@@ -1963,6 +1957,7 @@ class ImagineBoard_Reference( QWidget ):
     SIGNAL_BOARD_SAVE = QtCore.pyqtSignal( list )
     SIGNAL_CAMERA = QtCore.pyqtSignal( [ list, float, int ] )
     # Menu
+    SIGNAL_LOCKED = QtCore.pyqtSignal( bool )
     SIGNAL_REFRESH = QtCore.pyqtSignal()
     SIGNAL_FULL_SCREEN = QtCore.pyqtSignal( bool )
     SIGNAL_LOCATION = QtCore.pyqtSignal( str )
@@ -1997,6 +1992,7 @@ class ImagineBoard_Reference( QWidget ):
 
         # State
         self.state_inside = False
+        self.state_locked = False
         self.state_maximized = False
         self.state_press = False
         self.state_select = False
@@ -2191,7 +2187,6 @@ class ImagineBoard_Reference( QWidget ):
         self.color_previous = QColor( 0, 0, 0 )
 
         # Function>>
-        self.function_drop_panel = False
         self.function_operation = ""
 
         # Clip
@@ -2268,9 +2263,11 @@ class ImagineBoard_Reference( QWidget ):
             file_path = ""
         self.file_path = file_path
         self.update()
-    def Set_Function( self, function_drop_panel, function_operation ):
-        self.function_drop_panel = function_drop_panel
+    def Set_Function( self, function_operation ):
         self.function_operation = function_operation
+        self.update()
+    def Set_Locked( self, state_locked ):
+        self.state_locked = state_locked
         self.update()
 
     # Points
@@ -3391,6 +3388,9 @@ class ImagineBoard_Reference( QWidget ):
                 self.Pin_Draw_QPixmap( self.pin_list, i )
     def Board_Save( self ):
         self.SIGNAL_BOARD_SAVE.emit( self.pin_list )
+    def Board_Locked( self, boolean ):
+        self.state_locked = boolean
+        self.SIGNAL_LOCKED.emit( self.state_locked )
 
     # Reset
     def Reset_Rotation( self, lista ):
@@ -3431,11 +3431,12 @@ class ImagineBoard_Reference( QWidget ):
             if path != None:
                 suggestion = os.path.dirname( path )
                 break
+        previous_path = lista[0]["path"]
 
         # Select Directory
         file_dialog = QFileDialog( QWidget( self ) )
         file_dialog.setFileMode( QFileDialog.DirectoryOnly )
-        directory = file_dialog.getExistingDirectory( self, "Select Directory", suggestion )
+        directory = file_dialog.getExistingDirectory( self, f"Select Directory - previous_path = { previous_path }", suggestion )
         if directory not in [ "", "." ]:
             qdir = QDir( directory )
             qdir.setSorting( QDir.LocaleAware )
@@ -3743,6 +3744,7 @@ class ImagineBoard_Reference( QWidget ):
         qmenu = QMenu( self )
 
         # General
+        action_locked = qmenu.addAction( "Locked" )
         action_refresh = qmenu.addAction( "Refresh" )
         action_board_fit = qmenu.addAction( "Board Fit" )
         action_insert_pin = qmenu.addAction( "Insert Pin" )
@@ -3792,6 +3794,8 @@ class ImagineBoard_Reference( QWidget ):
         action_delete = qmenu.addAction( "Delete" )
 
         # Check Full Screen
+        action_locked.setCheckable( True )
+        action_locked.setChecked( self.state_locked )
         action_full_screen.setCheckable( True )
         action_full_screen.setChecked( self.state_maximized )
         # Check Label
@@ -3808,17 +3812,23 @@ class ImagineBoard_Reference( QWidget ):
         action_color_picker.setCheckable( True )
         action_color_picker.setChecked( self.state_pickcolor )
 
+        # General
+        if self.state_locked == True:
+            action_insert_pin.setEnabled( False )
+        # Label
+        if self.state_locked == True:
+            menu_label.setEnabled( False )
         # Disable Pin
         if pin_tipo != "image":
             menu_pin.setEnabled( False )
-        # Disable Pack
-        if self.select_count == 0:
+        # Disable Packer
+        if ( self.select_count == 0 or self.state_locked == True ):
             menu_pack.setEnabled( False )
         # Disable Reset
-        if self.pin_index == None:
+        if ( self.pin_index == None or self.state_locked == True ):
             menu_reset.setEnabled( False )
         # Disable Edit
-        if self.pin_index == None:
+        if ( self.pin_index == None or self.state_locked == True ):
             menu_edit.setEnabled( False )
         # Disable Color
         if ( self.pin_index == None or self.pigment_o == None ):
@@ -3830,7 +3840,7 @@ class ImagineBoard_Reference( QWidget ):
             action_insert_layer.setEnabled( False )
             action_insert_reference.setEnabled( False )
         # Disable Relative
-        if self.pin_index == None:
+        if ( self.pin_index == None or self.state_locked == True ):
             action_rebase.setEnabled( False )
             action_delete.setEnabled( False )
 
@@ -3841,6 +3851,8 @@ class ImagineBoard_Reference( QWidget ):
         action = qmenu.exec_( self.mapToGlobal( event.pos() ) )
 
         # General
+        if action == action_locked:
+            self.Board_Locked( not self.state_locked )
         if action == action_board_fit:
             self.Board_Fit()
         if action == action_insert_pin:
@@ -4000,14 +4012,15 @@ class ImagineBoard_Reference( QWidget ):
         if self.operation == "color_picker":
             ColorPicker_Event( self, ex, ey, self.qimage_grab )
 
-        if self.operation == "pin_move":
-            dx, dy = self.Point_Deltas( ex, ey )
-            if event.modifiers() == QtCore.Qt.NoModifier:
-                self.Move_Pin( dx, dy, False )
-            else:
-                self.Move_Pin( dx, dy, True )
-        if self.operation == "pin_transform":
-            self.Pin_Transform( ex, ey, self.pin_node )
+        if self.state_locked == False:
+            if self.operation == "pin_move":
+                dx, dy = self.Point_Deltas( ex, ey )
+                if event.modifiers() == QtCore.Qt.NoModifier:
+                    self.Move_Pin( dx, dy, False )
+                else:
+                    self.Move_Pin( dx, dy, True )
+            if self.operation == "pin_transform":
+                self.Pin_Transform( ex, ey, self.pin_node )
 
         if self.operation == "camera_move":
             self.Camera_Move( ex, ey ) 
@@ -4113,38 +4126,34 @@ class ImagineBoard_Reference( QWidget ):
         self.update()
     def dropEvent( self, event ):
         if event.mimeData().hasImage:
-            if ( self.drop == True and self.drag == False ):
+            if ( self.drop == True and self.drag == False and self.state_locked == False ):
                 # Policy
                 event.setDropAction( Qt.CopyAction )
                 # Position
                 pos = event.pos()
                 bx, by = self.Point_Location( pos.x(), pos.y() )
                 # Data
-                mime_data = Drop_Inside( self, event )
+                mime_data = Drop_Inside( self, event, False )
                 # Insert Pin
-                if self.function_drop_panel == False:
-                    count = len( mime_data )
-                    # Board
-                    self.state_press = True
+                count = len( mime_data )
+                # Board
+                self.state_press = True
+                # Progress Bar
+                self.ProgressBar_Value( 0 )
+                self.ProgressBar_Maximum( count )
+                # Pin References
+                self.drop = False
+                for i in range( 0, count ):
                     # Progress Bar
-                    self.ProgressBar_Value( 0 )
-                    self.ProgressBar_Maximum( count )
-                    # Pin References
-                    self.drop = False
-                    for i in range( 0, count ):
-                        # Progress Bar
-                        self.ProgressBar_Value( i + 1 )
-                        QApplication.processEvents()
-                        # Pin
-                        image_path = mime_data[i]
-                        pin = { "bx" : bx, "by" : by, "image_path" : image_path }
-                        self.SIGNAL_PIN_IMAGE.emit( pin, self.clip_false )
-                    # Progress Bar
-                    self.ProgressBar_Value( 0 )
-                    self.ProgressBar_Maximum( 1 )
-                # Run Function
-                if self.function_drop_panel == True:
-                    self.SIGNAL_DROP.emit( mime_data )
+                    self.ProgressBar_Value( i + 1 )
+                    QApplication.processEvents()
+                    # Pin
+                    image_path = mime_data[i]
+                    pin = { "bx" : bx, "by" : by, "image_path" : image_path }
+                    self.SIGNAL_PIN_IMAGE.emit( pin, self.clip_false )
+                # Progress Bar
+                self.ProgressBar_Value( 0 )
+                self.ProgressBar_Maximum( 1 )
                 # Board
                 self.state_press = False
                 self.Board_Update()
@@ -4517,7 +4526,10 @@ class ImagineBoard_Reference( QWidget ):
 
         # Drag and Drop Triangle
         if ( self.drop == True and self.drag == False ):
-            Painter_Triangle( self, painter, w2, h2, side )
+            if self.state_locked == False:
+                Painter_Triangle( self, painter, w2, h2, side )
+            elif self.state_locked == True:
+                Painter_Locked( self, painter, w2, h2, side )
 
         """
         # Packing Points
@@ -5450,6 +5462,111 @@ class Picker_Color_HSV( QWidget ):
             int( size * 2 - w * 2 ),
             int( size * 2 - w * 2 ),
             )
+
+        # Finish QPainter
+        painter.end()
+
+#endregion
+#region Function
+
+class Function_Process( QWidget ):
+    SIGNAL_DROP = QtCore.pyqtSignal( list )
+
+    # Init
+    def __init__( self, parent ):
+        super( Function_Process, self ).__init__( parent )
+        self.Variables()
+    def Variables( self ):
+        # Widget
+        self.ww = 500
+        self.hh = 500
+        self.w2 = int( self.ww * 0.5 )
+        self.h2 = int( self.hh * 0.5 )
+        self.side = 500
+        # Colors
+        self.color_1 = QColor( "#ffffff" )
+        self.color_2 = QColor( "#000000" )
+        # Drop Event
+        self.setAcceptDrops( True )
+        self.drop = False
+    def sizeHint( self ):
+        return QtCore.QSize( 500, 500 )
+
+    # Relay
+    def Set_Theme( self, color_1, color_2 ):
+        self.color_1 = color_1
+        self.color_2 = color_2
+    def Set_Size( self, ww, hh ):
+        self.ww = ww
+        self.hh = hh
+        self.w2 = ww * 0.5
+        self.h2 = hh * 0.5
+        if ww < hh:
+            self.side = ww
+        else:
+            self.side = hh
+        self.resize( ww, hh )
+
+    def dragEnterEvent( self, event ):
+        if event.mimeData().hasImage:
+            self.drop = True
+            event.accept()
+        else:
+            event.ignore()
+        self.update()
+    def dragMoveEvent( self, event ):
+        if event.mimeData().hasImage:
+            self.drop = True
+            event.accept()
+        else:
+            event.ignore()
+        self.update()
+    def dragLeaveEvent( self, event ):
+        self.drop = False
+        event.accept()
+        self.update()
+    def dropEvent( self, event ):
+        if event.mimeData().hasImage:
+            if self.drop == True:
+                event.setDropAction( Qt.CopyAction )
+                mime_data = Drop_Inside( self, event, True )
+                self.SIGNAL_DROP.emit( mime_data )
+            event.accept()
+        else:
+            event.ignore()
+        self.drop = False
+        self.update()
+
+    # Painter
+    def paintEvent( self, event ):
+        # Variables
+        text = "FUNCTION>>\nDROP IMAGES\nINSIDE BOX\nTO OPERATE"
+        font = "Consolas"
+        letter_size = 10
+
+        # Painter
+        painter = QPainter( self )
+        painter.setRenderHint( QtGui.QPainter.Antialiasing, True )
+
+        # Bounding Box
+        box = QRect( int( 0 ), int( 0 ), int( self.ww ), int( self.hh ) )
+
+        # Background Hover
+        painter.setBrush( QtCore.Qt.NoBrush )
+        painter.setPen( QPen( self.color_1, 1, Qt.DashLine ) )
+        painter.drawRect( box )
+
+        # String
+        painter.setBrush( QtCore.Qt.NoBrush )
+        painter.setPen( QPen( self.color_1, 1, Qt.SolidLine ) )
+        qfont = QFont( font )
+        qfont.setPointSizeF( letter_size )
+        painter.setFont( qfont )
+        painter.drawText( box, Qt.AlignCenter, text )
+
+        # Triangle
+        if self.drop == True:
+            Painter_Triangle( self, painter, self.w2, self.h2, self.side )
 
         # Finish QPainter
         painter.end()

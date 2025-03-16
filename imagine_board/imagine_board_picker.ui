@@ -17,7 +17,7 @@
    </sizepolicy>
   </property>
   <property name="focusPolicy">
-   <enum>Qt::ClickFocus</enum>
+   <enum>Qt::NoFocus</enum>
   </property>
   <layout class="QVBoxLayout" name="panel_color_widget_layout">
    <property name="spacing">

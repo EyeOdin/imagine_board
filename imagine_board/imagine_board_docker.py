@@ -45,6 +45,7 @@ from .imagine_board_modulo import (
     Picker_Block,
     Picker_Color_HUE,
     Picker_Color_HSV,
+    Function_Process,
     )
 
 #endregion
@@ -52,7 +53,7 @@ from .imagine_board_modulo import (
 
 # Plugin
 DOCKER_NAME = "Imagine Board"
-imagine_board_version = "2024_03_04"
+imagine_board_version = "2025_03_16"
 
 # File Formats
 extensions = [
@@ -176,6 +177,7 @@ class ImagineBoard_Docker( DockWidget ):
         self.sync_list = "Folder" # "Folder" "Reference" "Document"(recent documents)
         self.sync_type = "Normal" # "Normal" "Backup~"
         self.sync_sort = "Local Aware"
+        self.search_recursive = False
         self.insert_size = False
         self.insert_scale = 1 # Photobask legacy
         self.scale_method = False
@@ -211,6 +213,7 @@ class ImagineBoard_Docker( DockWidget ):
         self.grid_fit = False
 
         # Reference
+        self.ref_locked = False
         self.ref_kra = False
         self.ref_import = False
         self.ref_position = [ 1, 1 ]
@@ -235,7 +238,6 @@ class ImagineBoard_Docker( DockWidget ):
         # Function>>
         self.function_path_source = None
         self.function_path_destination = None
-        self.function_panel_drop = False
         self.function_operation = "NONE"
         self.function_string = []
         self.function_keyword = []
@@ -270,6 +272,7 @@ class ImagineBoard_Docker( DockWidget ):
         self.dialog.sync_list.currentTextChanged.connect( self.Sync_List )
         self.dialog.sync_type.currentTextChanged.connect( self.Sync_Type )
         self.dialog.sync_sort.currentTextChanged.connect( self.Sync_Sort )
+        self.dialog.search_recursive.toggled.connect( self.Search_Recursive )
         self.dialog.insert_size.toggled.connect( self.Insert_Size )
         self.dialog.scale_method.toggled.connect( self.Scale_Method )
         # Dialog Display Preview
@@ -287,12 +290,13 @@ class ImagineBoard_Docker( DockWidget ):
         self.dialog.function_path_destination.textChanged.connect( self.Function_Path )
         self.dialog.function_run.clicked.connect( self.Function_Run )
         # Dialog Function> Options
-        self.dialog.function_panel_drop.toggled.connect( self.Function_Panel_Drop )
         self.dialog.function_operation.currentTextChanged.connect( self.Function_Operation )
-        self.dialog.function_menu.clicked.connect( self.Function_Reset )
         self.dialog.function_string.returnPressed.connect( self.Function_String_Add )
         self.dialog.function_number.valueChanged.connect( self.Function_Number )
         self.dialog.function_keyword.itemPressed.connect( self.Function_String_List )
+        self.dialog.function_reset_operation.clicked.connect( self.Function_Reset_Operation )
+        self.dialog.function_reset_number.clicked.connect( self.Function_Reset_Number )
+        self.dialog.function_reset_string.clicked.connect( self.Function_Reset_String )
         # Dialog Function> Python
         self.dialog.function_python_name.currentIndexChanged.connect( self.Function_Python_Code )
         self.dialog.function_python_script.textChanged.connect( self.Function_Python_Editor )
@@ -310,6 +314,7 @@ class ImagineBoard_Docker( DockWidget ):
         self.layout.preview_view.installEventFilter( self )
         self.layout.imagine_grid.installEventFilter( self )
         self.layout.reference_view.installEventFilter( self )
+        self.dialog.function_drop_run.installEventFilter( self )
         self.layout.footer.installEventFilter( self )
         # Event Filter Others
         self.layout.mode.installEventFilter( self )
@@ -395,6 +400,7 @@ class ImagineBoard_Docker( DockWidget ):
         self.imagine_reference.SIGNAL_BOARD_SAVE.connect( self.File_Save_St )
         self.imagine_reference.SIGNAL_CAMERA.connect( self.Reference_Camera )
         # Menu
+        self.imagine_reference.SIGNAL_LOCKED.connect( self.Reference_Locked )
         self.imagine_reference.SIGNAL_REFRESH.connect( lambda: self.File_Load( self.ref_board ) )
         self.imagine_reference.SIGNAL_FULL_SCREEN.connect( self.Screen_Maximized )
         self.imagine_reference.SIGNAL_LOCATION.connect( self.File_Location )
@@ -425,6 +431,12 @@ class ImagineBoard_Docker( DockWidget ):
 
         self.color_hsv = Picker_Color_HSV( self.picker.panel_hsv )
         self.color_hsv.SIGNAL_COLOR.connect( self.Picker_HSV_23 )
+
+        #endregion
+        #region Function Drop Run
+
+        self.function_process = Function_Process( self.dialog.function_drop_run )
+        self.function_process.SIGNAL_DROP.connect( self.Function_Process )
 
         #endregion
     def Style( self ):
@@ -516,6 +528,7 @@ class ImagineBoard_Docker( DockWidget ):
         self.sync_list = self.Set_Read( "STR", "sync_list", self.sync_list )
         self.sync_type = self.Set_Read( "STR", "sync_type", self.sync_type )
         self.sync_sort = self.Set_Read( "STR", "sync_sort", self.sync_sort )
+        self.search_recursive = self.Set_Read( "EVAL", "search_recursive", self.search_recursive )
         self.insert_size = self.Set_Read( "EVAL", "insert_size", self.insert_size )
         self.scale_method = self.Set_Read( "EVAL", "scale_method", self.scale_method )
         # Preview
@@ -530,7 +543,6 @@ class ImagineBoard_Docker( DockWidget ):
         #endregion
         #region Dialog Function
 
-        self.function_panel_drop = self.Set_Read( "EVAL", "function_panel_drop", self.function_panel_drop )
         self.function_string = self.Set_Read( "EVAL", "function_string", self.function_string  )
         self.preview_display = self.Set_Read( "EVAL", "preview_display", self.preview_display )
 
@@ -544,6 +556,7 @@ class ImagineBoard_Docker( DockWidget ):
         #endregion
         #region Reference
 
+        self.ref_locked = self.Set_Read( "EVAL", "ref_locked", self.ref_locked )
         self.ref_kra = self.Set_Read( "EVAL", "ref_kra", self.ref_kra )
         self.ref_position = self.Set_Read( "EVAL", "ref_position", self.ref_position )
         self.ref_zoom = self.Set_Read( "EVAL", "ref_zoom", self.ref_zoom )
@@ -565,6 +578,7 @@ class ImagineBoard_Docker( DockWidget ):
         self.dialog.sync_list.setCurrentText( self.sync_list )
         self.dialog.sync_type.setCurrentText( self.sync_type )
         self.dialog.sync_sort.setCurrentText( self.sync_sort )
+        self.dialog.search_recursive.setChecked( self.search_recursive )
         self.dialog.insert_size.setChecked( self.insert_size )
         self.dialog.scale_method.setChecked( self.scale_method )
         # Preview
@@ -581,7 +595,6 @@ class ImagineBoard_Docker( DockWidget ):
         #endregion
         #region Dialog Function
 
-        self.dialog.function_panel_drop.setChecked( self.function_panel_drop )
         for item in self.function_string:
             self.dialog.function_keyword.addItem( item )
 
@@ -604,6 +617,8 @@ class ImagineBoard_Docker( DockWidget ):
 
         # Index
         self.Mode_Index( self.mode_index )
+        # Reference
+        self.imagine_reference.Set_Locked( self.ref_locked )
 
         #endregion
     def Set_Read( self, mode, entry, default ):
@@ -736,6 +751,11 @@ class ImagineBoard_Docker( DockWidget ):
             self.Filter_Search()
         # Save
         Krita.instance().writeSetting( "Imagine Board", "sync_sort", str( self.sync_sort ) )
+    def Search_Recursive( self, search_recursive ):
+        self.search_recursive = search_recursive
+        if self.state_load == True:
+            self.Filter_Search()
+        Krita.instance().writeSetting( "Imagine Board", "search_recursive", str( self.search_recursive ) )
     def Insert_Size( self, insert_size ):
         self.insert_size = insert_size
         Krita.instance().writeSetting( "Imagine Board", "insert_size", str( self.insert_size ) )
@@ -786,14 +806,15 @@ class ImagineBoard_Docker( DockWidget ):
         self.dialog.function_operation.addItem( "KEY_CLEAN" )
         self.dialog.function_operation.insertSeparator( 6 )
         self.dialog.function_operation.addItem( "RENAME_ORDER" )
-        self.dialog.function_operation.insertSeparator( 8 )
+        self.dialog.function_operation.addItem( "RENAME_EXTENSION" )
+        self.dialog.function_operation.insertSeparator( 9 )
         self.dialog.function_operation.addItem( "SAVE_ORDER" )
         self.dialog.function_operation.addItem( "SAVE_ORIGINAL" )
-        self.dialog.function_operation.insertSeparator( 11 )
+        self.dialog.function_operation.insertSeparator( 12 )
         self.dialog.function_operation.addItem( "SEARCH_KEY" )
         self.dialog.function_operation.addItem( "SEARCH_NULL" )
         self.dialog.function_operation.addItem( "SEARCH_COPY" )
-        self.dialog.function_operation.insertSeparator( 15 )
+        self.dialog.function_operation.insertSeparator( 16 )
         self.dialog.function_operation.addItem( "PYTHON_SCRIPT" )
     def Combobox_Code( self ):
         # Files
@@ -966,12 +987,14 @@ class ImagineBoard_Docker( DockWidget ):
         ps = self.layout.preview_view.size()
         gs = self.layout.imagine_grid.size()
         rs = self.layout.reference_view.size()
+        ds = self.dialog.function_drop_run.size()
         self.state_maximized = self.isMaximized()
 
         # Modules
         self.imagine_preview.Set_Size( ps.width(), ps.height(), self.state_maximized )
         self.imagine_grid.Set_Size( gs.width(), gs.height(), self.state_maximized )
         self.imagine_reference.Set_Size( rs.width(), rs.height(), self.state_maximized )
+        self.function_process.Set_Size( ds.width(), ds.height() )
 
         # Color Picker Swatches
         self.block_pen.Set_Size( self.layout.label_pen.width(), self.layout.label_pen.height() )
@@ -1056,7 +1079,7 @@ class ImagineBoard_Docker( DockWidget ):
         return qpixmap
     def Download_Data( self , url ):
         try:
-            request = urllib.request.Request( url, headers={ "User-Agent": "Mozilla/5.0" } )
+            request = urllib.request.Request( url, headers={ "User-Agent": "Mozilla/5.0 (Windows; U; Windows NT 5.1; de; rv:1.9.1.5) Gecko/20091102 Firefox/3.5.5" } )
             response = urllib.request.urlopen( request )
             data = response.read()
         except:
@@ -1110,10 +1133,7 @@ class ImagineBoard_Docker( DockWidget ):
             # Check Source
             check_html = self.Check_Html( item )
             if check_html == True:
-                if self.function_panel_drop == False:
-                    self.Preview_Internet( item )
-                if self.function_panel_drop == True:
-                    self.Function_Process( lista )
+                self.Preview_Internet( item )
             else:
                 # Checks
                 item = os.path.abspath( item )
@@ -1127,12 +1147,9 @@ class ImagineBoard_Docker( DockWidget ):
                     directory = os.path.dirname( item )
                     basename = os.path.basename( item )
                 # Open
-                if self.function_panel_drop == False: # Preview and Grid Only
-                    if self.folder_path != directory:
-                        self.Folder_Load( directory, 0 )
-                    self.Preview_String( basename )
-                if self.function_panel_drop == True:
-                    self.Function_Process( lista )
+                if self.folder_path != directory:
+                    self.Folder_Load( directory, 0 )
+                self.Preview_String( basename )
     def Drag_Drop( self, image_path, clip ):
         # New Documents only consider the path so it excludes clip
         qimage = self.Image_Clip( image_path, clip )
@@ -1422,7 +1439,19 @@ class ImagineBoard_Docker( DockWidget ):
                 self.qdir.setSorting( self.file_sort )
                 self.qdir.setFilter( QDir.Files | QDir.NoSymLinks | QDir.NoDotAndDotDot )
                 self.qdir.setNameFilters( self.file_extension )
-                files = self.qdir.entryInfoList()
+                # Recursive Files
+                if self.search_recursive == True:
+                    files = list()
+                    it = QDirIterator( self.folder_path, QDirIterator.Subdirectories )
+                    while( it.hasNext() ):
+                        file_path = it.filePath()
+                        ext = f"*{ os.path.splitext( file_path )[1] }"
+                        if ext in self.file_extension:
+                            files.append( it.fileInfo() )
+                        it.next()
+                else:
+                    files = self.qdir.entryInfoList()
+                # Variables
                 count = len( files )
             elif self.sync_list == "Krita":
                 # Variables
@@ -1797,6 +1826,10 @@ class ImagineBoard_Docker( DockWidget ):
     #region Reference
 
     # Reference Operations
+    def Reference_Locked( self, ref_locked ):
+        self.ref_locked = ref_locked
+        # Save
+        Krita.instance().writeSetting( "Imagine Board", "ref_locked", str( self.ref_locked ) )
     def Reference_Increment( self, increment ):
         pass
 
@@ -2498,9 +2531,9 @@ class ImagineBoard_Docker( DockWidget ):
         if string == "NONE":
             string = ""
         # Modules
-        self.imagine_preview.Set_Function( self.function_panel_drop, string )
-        self.imagine_grid.Set_Function( self.function_panel_drop, string )
-        self.imagine_reference.Set_Function( self.function_panel_drop, string )
+        self.imagine_preview.Set_Function( string )
+        self.imagine_grid.Set_Function( string )
+        self.imagine_reference.Set_Function( string )
 
     def Function_Path( self ):
         # Read
@@ -2544,10 +2577,6 @@ class ImagineBoard_Docker( DockWidget ):
         if len( file_list ) > 0:
             self.Function_Process( file_list )
 
-    def Function_Panel_Drop( self, boolean ):
-        self.function_panel_drop = boolean
-        self.Function_Module()
-        Krita.instance().writeSetting( "Imagine Board", "function_panel_drop", str( self.function_panel_drop ) )
     def Function_Operation( self, operation ):
         # Variables
         self.function_operation = operation
@@ -2562,9 +2591,7 @@ class ImagineBoard_Docker( DockWidget ):
                 request += " N"
         if "PYTHON" in operation:
             request += "PY"
-        self.dialog.function_menu.setText( request )
-    def Function_Reset( self ):
-        self.dialog.function_operation.setCurrentIndex( 0 )
+        self.dialog.function_reset_operation.setText( request )
     def Function_Number( self, number ):
         self.function_number = number
 
@@ -2666,6 +2693,14 @@ class ImagineBoard_Docker( DockWidget ):
         self.thread_function.quit()
         self.update()
 
+    # Resets
+    def Function_Reset_Operation( self ):
+        self.dialog.function_operation.setCurrentIndex( 0 )
+    def Function_Reset_Number( self ):
+        self.dialog.function_number.setValue( 1 )
+    def Function_Reset_String( self ):
+        self.dialog.function_keyword.clear()
+
     #endregion
     #region Watcher
 
@@ -2750,6 +2785,7 @@ class ImagineBoard_Docker( DockWidget ):
         self.imagine_preview.Set_Theme( self.color_1, self.color_2 )
         self.imagine_grid.Set_Theme( self.color_1, self.color_2 )
         self.imagine_reference.Set_Theme( self.color_1, self.color_2 )
+        self.function_process.Set_Theme( self.color_1, self.color_2 )
     def Window_Closed( self ):
         pass
 
@@ -2807,6 +2843,7 @@ class ImagineBoard_Docker( DockWidget ):
             self.layout.imagine_grid,
             self.layout.reference_view,
             self.layout.footer,
+            self.dialog.function_drop_run,
             ]
         if ( event.type() == QEvent.Resize and source in widgets ):
             self.Update_Size()
@@ -3057,6 +3094,17 @@ class Worker_Function( QObject ):
                 path_new = None
                 # New String
                 path_new = self.String_Rename_Order( path, keyword, numi )
+                self.source.dialog.function_number.setValue( numi + 1 )
+                self.Cycle_Action( operation_type, path, path_new, index, file_total, found )
+        if operation == "RENAME_EXTENSION":
+            for i in range( 0, file_total ):
+                # Variables
+                index = i + 1
+                numi = number + i
+                path = file_list[i]
+                path_new = None
+                # New String
+                path_new = self.String_Rename_Extension( path, keyword, numi )
                 self.source.dialog.function_number.setValue( numi + 1 )
                 self.Cycle_Action( operation_type, path, path_new, index, file_total, found )
         # Save
@@ -3328,6 +3376,23 @@ class Worker_Function( QObject ):
             base_new = name_new + keys + extension
             path_new = os.path.join( directory, base_new )
         return path_new
+    def String_Rename_Extension( self, path, keyword, number ):
+        if len( keyword ) == 0:
+            path_new = path
+        else:
+            # String Components
+            directory, basename, name, extension = self.Path_Components( path )
+
+            # Extension Composite
+            if keyword[0].startswith( "." ) == True:
+                ext = keyword[0]
+            else:
+                ext = "." + keyword[0]
+
+            # Create new path
+            base_new = name + ext
+            path_new = os.path.join( directory, base_new )
+        return path_new
     # Save
     def String_Save_Order( self, path, keyword, number ):
         if len( keyword ) == 0:
@@ -3411,11 +3476,9 @@ class Worker_Python( QObject ):
 Known Krita Bugs:
 - Importing reference with alpha crops image size
 
-NEW :
-- Reference mode context menu "Refresh"
-- Reference Pin accepts clipped images from Preview mode
-- Preview mode displays things in original size only
-- Folder load now initializes correctly with different sorting methods.
-- Fixed bug : from PReview mode sending a pin to reference mode will always crop the image regardless of the clip state.
-
+NEW:
+- Reference can now Lock the board
+- Rescursive search of files on folders
+- Rename Extension Function in order to change quickly jfif files into jpgs
+- Reset Values with a click
 """
