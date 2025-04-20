@@ -1310,7 +1310,7 @@
                    </property>
                    <property name="maximumSize">
                     <size>
-                     <width>20</width>
+                     <width>30</width>
                      <height>16777215</height>
                     </size>
                    </property>
@@ -1319,9 +1319,6 @@
                    </property>
                    <property name="text">
                     <string/>
-                   </property>
-                   <property name="flat">
-                    <bool>true</bool>
                    </property>
                   </widget>
                  </item>
@@ -1378,7 +1375,7 @@
                    </property>
                    <property name="maximumSize">
                     <size>
-                     <width>20</width>
+                     <width>30</width>
                      <height>16777215</height>
                     </size>
                    </property>
@@ -1387,9 +1384,6 @@
                    </property>
                    <property name="text">
                     <string/>
-                   </property>
-                   <property name="flat">
-                    <bool>true</bool>
                    </property>
                   </widget>
                  </item>
@@ -1445,7 +1439,7 @@
                      </property>
                      <property name="maximumSize">
                       <size>
-                       <width>20</width>
+                       <width>30</width>
                        <height>16777215</height>
                       </size>
                      </property>
@@ -1454,9 +1448,6 @@
                      </property>
                      <property name="text">
                       <string/>
-                     </property>
-                     <property name="flat">
-                      <bool>true</bool>
                      </property>
                     </widget>
                    </item>
@@ -1795,8 +1786,8 @@
               <rect>
                <x>0</x>
                <y>0</y>
-               <width>152</width>
-               <height>115</height>
+               <width>480</width>
+               <height>448</height>
               </rect>
              </property>
              <layout class="QVBoxLayout" name="scroll_area_contents_system_layout">

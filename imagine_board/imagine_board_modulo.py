@@ -154,7 +154,7 @@ def Path_Copy( self, path ):
     copy.clear()
     copy.setText( path )
 # Color Picker
-def ColorPicker_Event( self, ex, ey, qimage_grab ):
+def ColorPicker_Event( self, ex, ey, qimage_grab, state_press ):
     if ( self.state_pickcolor == True and qimage_grab != None ):
         # Event
         ex = Limit_Range( ex, 0, self.ww - 1 )
@@ -172,10 +172,10 @@ def ColorPicker_Event( self, ex, ey, qimage_grab ):
 
         # Apply Color
         if self.pigment_o != None:
-            if self.state_press == True:
+            if state_press == True:
                 self.pigment_o.API_Input_Kelvin( 6500 )
                 cor = self.pigment_o.API_Input_Preview( "RGB", red, green, blue, 0 )
-            if self.state_press == False:
+            if state_press == False:
                 cor = self.pigment_o.API_Input_Apply( "RGB", red, green, blue, 0 )
             red   = cor[ "rgb_d1" ]
             green = cor[ "rgb_d2" ]
@@ -209,14 +209,14 @@ def ColorPicker_Event( self, ex, ey, qimage_grab ):
                 green = display.greenF()
                 blue  = display.blueF()
             # Apply Color
-            if self.state_press == False:
+            if state_press == False:
                 Krita.instance().activeWindow().activeView().setForeGroundColor( managed_color )
 
         # Display Color
         qcolor = QColor( int( red * 255 ), int( green * 255 ), int( blue * 255 ) )
         hex_code = qcolor.name()
         self.color_active = qcolor
-        if self.state_press == False:
+        if state_press == False:
             # Previous
             self.color_previous = qcolor
             # Clipboard
@@ -1104,7 +1104,7 @@ class ImagineBoard_Preview( QWidget ):
         if ( event.modifiers() == QtCore.Qt.NoModifier and event.buttons() == QtCore.Qt.LeftButton ):
             if self.state_pickcolor == True:
                 self.operation = "color_picker"
-                ColorPicker_Event( self, ex, ey, self.qimage_grab )
+                ColorPicker_Event( self, self.ex, self.ey, self.qimage_grab, True )
             elif self.state_clip == True:
                 self.operation = "clip"
                 self.Clip_Node( ex, ey )
@@ -1140,6 +1140,9 @@ class ImagineBoard_Preview( QWidget ):
         # Update
         self.update()
     def mouseMoveEvent( self, event ):
+        # Variable
+        self.state_press = True
+
         # Event
         ex = event.x()
         ey = event.y()
@@ -1148,7 +1151,7 @@ class ImagineBoard_Preview( QWidget ):
 
         # Neutral
         if ( self.operation == "color_picker" and self.anim_timer.isActive() == False ):
-            ColorPicker_Event( self, ex, ey, self.qimage_grab )
+            ColorPicker_Event( self, self.ex, self.ey, self.qimage_grab, True )
         if self.operation == "clip":
             self.Clip_Edit( ex, ey, self.clip_node )
         # Camera
@@ -1177,13 +1180,15 @@ class ImagineBoard_Preview( QWidget ):
     def mouseReleaseEvent( self, event ):
         # Variables
         self.state_press = False
+        # Function
+        self.Clip_Flip()
+        Cursor_Icon( self )
+        if self.operation == "color_picker":
+            ColorPicker_Event( self, self.ex, self.ey, self.qimage_grab, False )
+        # Variables
         self.operation = None
         self.drop = False
         self.drag = False
-        # Function
-        self.Clip_Flip()
-        ColorPicker_Event( self, self.ex, self.ey, self.qimage_grab )
-        Cursor_Icon( self )
         # Update
         self.update()
         self.Camera_Grab()
@@ -1591,6 +1596,7 @@ class ImagineBoard_Grid( QWidget ):
                         else:
                             qpixmap = True
                 except:
+                    path = None
                     qpixmap = None
                 string.append( path )
                 render.append( qpixmap )
@@ -1763,7 +1769,7 @@ class ImagineBoard_Grid( QWidget ):
         if ( event.modifiers() == QtCore.Qt.NoModifier and event.buttons() == QtCore.Qt.LeftButton ):
             if self.state_pickcolor == True:
                 self.operation = "color_picker"
-                ColorPicker_Event( self, ex, ey, self.qimage_grab )
+                ColorPicker_Event( self, self.ex, self.ey, self.qimage_grab, True )
             else:
                 self.operation = "neutral_press"
         if ( event.modifiers() == QtCore.Qt.ShiftModifier and event.buttons() == QtCore.Qt.LeftButton ):
@@ -1793,6 +1799,9 @@ class ImagineBoard_Grid( QWidget ):
         # Update
         self.update()
     def mouseMoveEvent( self, event ):
+        # Variable
+        self.state_press = True
+
         # Event
         ex = event.x()
         ey = event.y()
@@ -1803,7 +1812,7 @@ class ImagineBoard_Grid( QWidget ):
         if self.operation == "neutral_press":
             self.Grid_Index( ex, ey )
         if self.operation == "color_picker":
-            ColorPicker_Event( self, ex, ey, self.qimage_grab )
+            ColorPicker_Event( self, self.ex, self.ey, self.qimage_grab, True )
         # Camera
         if self.operation == "camera_move":
             pass
@@ -1824,11 +1833,13 @@ class ImagineBoard_Grid( QWidget ):
         self.SIGNAL_MODE.emit( 0 )
     def mouseReleaseEvent( self, event ):
         # Variables
-        self.operation = None
         self.state_press = False
         # Function
-        ColorPicker_Event( self, self.ex, self.ey, self.qimage_grab )
         Cursor_Icon( self )
+        if self.operation == "color_picker":
+            ColorPicker_Event( self, self.ex, self.ey, self.qimage_grab, False )
+        # Variables
+        self.operation = None
         # Update
         self.update()
         self.Camera_Grab()
@@ -3963,7 +3974,7 @@ class ImagineBoard_Reference( QWidget ):
         if ( event.modifiers() == QtCore.Qt.NoModifier and event.buttons() == QtCore.Qt.LeftButton ):
             if self.state_pickcolor == True:
                 self.operation = "color_picker"
-                ColorPicker_Event( self, ex, ey, self.qimage_grab )
+                ColorPicker_Event( self, self.ex, self.ey, self.qimage_grab, True )
             if self.state_pickcolor == False:
                 if self.pin_index == None:
                     self.operation = "select_replace"
@@ -4002,6 +4013,9 @@ class ImagineBoard_Reference( QWidget ):
         self.Cursor_Shape( self.operation, self.pin_node )
         self.update()
     def mouseMoveEvent( self, event ):
+        # Variable
+        self.state_press = True
+
         # Event
         ex = event.x()
         ey = event.y()
@@ -4010,7 +4024,7 @@ class ImagineBoard_Reference( QWidget ):
 
         # Operations
         if self.operation == "color_picker":
-            ColorPicker_Event( self, ex, ey, self.qimage_grab )
+            ColorPicker_Event( self, self.ex, self.ey, self.qimage_grab, True )
 
         if self.state_locked == False:
             if self.operation == "pin_move":
@@ -4066,7 +4080,8 @@ class ImagineBoard_Reference( QWidget ):
         self.drop = False
         self.drag = False
         # Color Picker
-        ColorPicker_Event( self, self.ex, self.ey, self.qimage_grab )
+        if self.operation == "color_picker":
+            ColorPicker_Event( self, self.ex, self.ey, self.qimage_grab, False )
         # Release
         self.Release_Event()
     def Release_Event( self ):

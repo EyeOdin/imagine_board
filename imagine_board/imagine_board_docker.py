@@ -53,7 +53,7 @@ from .imagine_board_modulo import (
 
 # Plugin
 DOCKER_NAME = "Imagine Board"
-imagine_board_version = "2025_03_16"
+imagine_board_version = "2025_04_20"
 
 # File Formats
 extensions = [
@@ -3476,9 +3476,4 @@ class Worker_Python( QObject ):
 Known Krita Bugs:
 - Importing reference with alpha crops image size
 
-NEW:
-- Reference can now Lock the board
-- Rescursive search of files on folders
-- Rename Extension Function in order to change quickly jfif files into jpgs
-- Reset Values with a click
 """
