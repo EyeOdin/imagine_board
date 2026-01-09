@@ -2,29 +2,30 @@
 
 # Purpose
 
-Imagine Board is a Krita plugin to browse images and create image boards.
+Imagine Board is a Krita plugin to browse images and creates image boards.
 
 # Features
 
 * Modes: Preview, Grid and Reference
-* Mouse and Stylus Interface
-* Slider and Number Index Interface
-* Dynamic File Watcher
-* Search
-* Slideshow
-* Link Boards
-* Packing
-* Batch Processor
+* Mouse, Keyboard and Stylus Interface
+* Files ( Search, Index )
+* Color Picker
+* Content Menu
+* Preview Slideshow
+* Grid Bookmarks
+* Reference Boards ( File(EO), Link(KRA) )
 * Support to various File Formats
+* Internet Display
 * Read ![wiki](https://github.com/EyeOdin/imagine_board/wiki) for more information
+* How to ![install a plugin](https://github.com/EyeOdin/imagine_board/wiki/Plugin-Instalation)
 
 # Preview
 
-![Picture](https://raw.githubusercontent.com/EyeOdin/imagine_board/master/imagine_board/PREVIEWS/ib_d001.png)
+![Picture](https://raw.githubusercontent.com/EyeOdin/imagine_board/master/imagine_board/PREVIEWS/ib_preview_a.png)
 
-![Picture](https://raw.githubusercontent.com/EyeOdin/imagine_board/master/imagine_board/PREVIEWS/ib_d002.png)
+![Picture](https://raw.githubusercontent.com/EyeOdin/imagine_board/master/imagine_board/PREVIEWS/ib_grid_a.png)
 
-![Picture](https://raw.githubusercontent.com/EyeOdin/imagine_board/master/imagine_board/PREVIEWS/ib_d003.png)
+![Picture](https://raw.githubusercontent.com/EyeOdin/imagine_board/master/imagine_board/PREVIEWS/ib_reference_a.png)
 
 # Support
 
