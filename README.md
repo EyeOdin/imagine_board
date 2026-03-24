@@ -22,11 +22,9 @@ Imagine Board is a Krita plugin to browse images and creates image boards.
 
 # Preview
 
-![Picture](https://raw.githubusercontent.com/EyeOdin/imagine_board/master/imagine_board/PREVIEWS/ib_preview_file.png)
-
-![Picture](https://raw.githubusercontent.com/EyeOdin/imagine_board/master/imagine_board/PREVIEWS/ib_grid_file.png)
-
-![Picture](https://raw.githubusercontent.com/EyeOdin/imagine_board/master/imagine_board/PREVIEWS/ib_reference_board.png)
+![Picture](https://raw.githubusercontent.com/EyeOdin/imagine_board/master/imagine_board/PREVIEWS/ib_preview_image.png)
+![Picture](https://raw.githubusercontent.com/EyeOdin/imagine_board/master/imagine_board/PREVIEWS/ib_grid_image.png)
+![Picture](https://raw.githubusercontent.com/EyeOdin/imagine_board/master/imagine_board/PREVIEWS/ib_reference_pin.png)
 
 # Support
 
