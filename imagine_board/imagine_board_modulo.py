@@ -18,42 +18,171 @@
 #region Imports
 
 # Python
+import re
 import os
 import copy
 import math
 import time
-import urllib
 import zipfile
+import subprocess
+import webbrowser
 # Krita
 from krita import *
 # PyQt5
 from PyQt5 import QtWidgets, QtCore, QtGui, uic
-# Imagine Board
+# Plugin Modules
+from .imagine_board_constants import *
 from .imagine_board_calculations import *
 
 #endregion
-#region Global Variables
 
-# Color Picker Display
-colorpicker_size = 250
-cps_a = colorpicker_size * 0.015
-cps_b = colorpicker_size - ( cps_a * 2 )
-cps_c = colorpicker_size * 0.040
-cps_d = colorpicker_size - ( cps_c * 2 )
-cps_e = colorpicker_size * 0.105
-cps_f = colorpicker_size - ( cps_e * 2 )
-cps_g = colorpicker_size * 0.120
-cps_h = colorpicker_size - ( cps_g * 2 )
-
-#endregion
 
 #region Shared Function
 
+# Icons
+def Style_Icon( self ):
+    scale = 100
+    ki = Krita.instance()
+    self.qicon_img  = ki.icon( "document-new" ) # Static
+    self.qicon_anim = ki.icon( "layer-animated" ) # Animated
+    self.qicon_comp = ki.icon( "bundle_archive" ) # Compressed
+    self.qicon_dir  = ki.icon( "document-open" ) # Directory
+    self.qicon_web  = ki.icon( "download" ) # Internet
+    self.qicon_comp = Style_Crop( self.qicon_comp, 16, 0, 0, 16, 16, scale )
+    self.qicon_dir  = Style_Crop( self.qicon_dir, 22, 3, 3, 16, 16, scale )
+def Style_Crop( qicon, os, px, py, pw, ph, s ):
+    # Icons are 16x16 originally even those with margin
+    pix = qicon.pixmap( int( os * s ), int( os * s ), QIcon.Normal, QIcon.On )
+    pix = pix.copy( int( px * s ), int( py * s ), int( pw * s ), int( ph * s ) )
+    qicon = QIcon( pix )
+    return qicon
+
+# Item
+def Item_QImageReader( reader, width, height, state_fit ):
+    # Variables
+    qpixmap = None
+    # Image Fit
+    grid_fit = Information_Fit( state_fit )
+    # QImageReader Transform
+    reader.setAutoTransform( True )
+    qsize = reader.size()
+    qsize_valid = qsize.isValid()
+    if qsize_valid == True: # no scale method, only smooth
+        scale = QSize( width, height )
+        qsize.scale( scale, grid_fit )
+        reader.setScaledSize( qsize )
+        qpixmap = QPixmap().fromImageReader( reader )
+    return qpixmap
+def Item_QImage( qimage, width, height, grid_fit, scale_method ):
+    qimage = qimage.scaled( int( width ), int( height ), grid_fit, scale_method  )
+    return qimage
+def Item_QPixmap( qpixmap, width, height, grid_fit, scale_method ):
+    qpixmap = qpixmap.scaled( int( width ), int( height ), grid_fit, scale_method  )
+    return qpixmap
+def Item_Size( width, height, depth ):
+    size_bytes = ( width * height * depth ) / 8
+    size_mb = size_bytes / 1024 / 1024
+    return size_mb
+def Item_Rotate( rotate, width, height ):
+    if rotate == True:  rot_width, rot_height = height, width
+    else:               rot_width, rot_height = width, height
+    return rot_width, rot_height
+def Item_Icon( qicon, width, height ):
+    mini = min( width, height )
+    margin = int( mini * 0.1 )
+    side = int( mini - margin )
+    ico_qpixmap = qicon.pixmap( side, side, QIcon.Normal, QIcon.On )
+    ico_size = Item_Size( ico_qpixmap.width(), ico_qpixmap.height(), ico_qpixmap.depth() )
+    return ico_qpixmap, ico_size
+
+# Fit
+def Fit_Image( reader, width, height, state_fit ):
+    size = 0
+    rotate = Information_Orientation( reader )
+    width, height = Item_Rotate( rotate, width, height )
+    qpixmap = Item_QImageReader( reader, width, height, state_fit )
+    if qpixmap != None:
+        size = Item_Size( width, height, qpixmap.depth() )
+    return qpixmap, size
+def Fit_QPixmap( qpixmap, width, height, state_fit, grid_method ):
+    grid_fit = Information_Fit( state_fit )
+    qpixmap = Item_QPixmap( qpixmap, width, height, grid_fit, grid_method )
+    size = Item_Size( qpixmap.width(), qpixmap.height(), qpixmap.depth() )
+    return qpixmap, size
+def Fit_Compressed( url, width, height, state_fit ):
+    # Variables
+    side = min( width, height )
+    pk = 0.8
+    pw = int( side * pk )
+    ph = int( side * pk )
+    # Defaults
+    qpixmap = QPixmap( int( pw ), int( ph ) )
+    qpixmap.fill( Qt.transparent )
+    size = 0
+    # Archive
+    archive = zipfile.ZipFile( url, "r" )
+    if url.endswith( file_krita ) == True: # KRA KRZ ORA Bundle
+        if url.endswith( "bundle" ):    find = preview_png
+        else:                           find = merged_png
+        buffer = Compressed_Buffer( archive, find )
+        reader = QImageReader( buffer )
+        if reader.canRead():
+            qpixmap, size = Fit_Image( reader, width, height, state_fit )
+    else: # ZIP file ( icon )
+        comp_path = list()
+        name_list = archive.namelist()
+        for name in name_list:
+            basename = os.path.basename( name )
+            extension = basename.split( "." )[-1]
+            if extension in file_search:
+                comp_path.append( name )
+        count = len( comp_path )
+        if count > 0:
+            comp_order = Compressed_Sort( comp_path )
+            for name in comp_order:
+                buffer = Compressed_Buffer( archive, name )
+                reader = QImageReader( buffer )
+                if reader.canRead():
+                    qpixmap, size = Stretch_Icon( reader, pw, ph )
+                    break
+    # Return
+    return qpixmap, size
+def Fit_Directory( url, width, height ):
+    # Variables
+    side = min( width, height )
+    pw = int( side * 0.8 )
+    ph = int( side * 0.58 )
+    # Defaults
+    qpixmap = QPixmap( int( pw ), int( ph ) )
+    qpixmap.fill( Qt.transparent )
+    size = 0
+    # Directory
+    qdir = QDir()
+    qdir.setPath( url )
+    qdir.setFilter( QDir.Files | QDir.NoSymLinks | QDir.NoDotAndDotDot )
+    qdir.setNameFilters( file_normal )
+    # Files
+    it = QDirIterator( qdir, QDirIterator.NoIteratorFlags )
+    while it.hasNext():
+        reader = QImageReader( it.next() )
+        if reader.canRead():
+            qpixmap, size = Stretch_Icon( reader, pw, ph )
+            break
+    del qdir, it
+    return qpixmap, size
+# Stretch
+def Stretch_Icon( reader, width, height ):
+    reader.setAutoTransform( True )
+    qpixmap = QPixmap().fromImageReader( reader )
+    qpixmap = qpixmap.scaled( int( width ), int( height ), Qt.IgnoreAspectRatio, Qt.FastTransformation  )
+    size = Item_Size( qpixmap.width(), qpixmap.height(), qpixmap.depth() )
+    return qpixmap, size
+
 # Painter
-def Painter_Triangle( self, painter, w2, h2, side ):
+def Painter_Triangle( painter, w2, h2, side, qcolor ):
     # Painter
     painter.setPen( QtCore.Qt.NoPen )
-    painter.setBrush( QBrush( QColor( self.color_1 ) ) )
+    painter.setBrush( QBrush( qcolor ) )
     # Variables
     kw = 0.3 * side
     kh = 0.2 * side
@@ -65,25 +194,31 @@ def Painter_Triangle( self, painter, w2, h2, side ):
         QPoint( int( w2 ),      int( h2 + kh ) ),
         ] )
     painter.drawPolygon( poly_tri )
-def Painter_Locked( self, painter, w2, h2, side ):
+def Painter_Locked( painter, w2, h2, side, qcolor ):
     # Painter
     painter.setPen( QtCore.Qt.NoPen )
-    painter.setBrush( QBrush( QColor( self.color_1 ) ) )
+    painter.setBrush( QBrush( qcolor) )
     # Variables
     kw = 0.3 * side
     kh = 0.2 * side
-    d = 0.5
+    d = 0.2
     # Polygons
-    bar = QPolygon( [
-        QPoint( int( w2 - kw ), int( h2 - kh * d ) ),
-        QPoint( int( w2 + kw ), int( h2 - kh * d ) ),
-        QPoint( int( w2 + kw ), int( h2 + kh * d ) ),
-        QPoint( int( w2 - kw ), int( h2 + kh * d ) ),
+    bar1 = QPolygon( [
+        QPoint( int( w2 - kw ),     int( h2 - kh ) ),
+        QPoint( int( w2 - kw * d ), int( h2 - kh ) ),
+        QPoint( int( w2 - kw * d ), int( h2 + kh ) ),
+        QPoint( int( w2 - kw ),     int( h2 + kh ) ),
         ] )
+    bar2 = QPolygon( [
+        QPoint( int( w2 + kw ),     int( h2 - kh ) ),
+        QPoint( int( w2 + kw * d ), int( h2 - kh ) ),
+        QPoint( int( w2 + kw * d ), int( h2 + kh ) ),
+        QPoint( int( w2 + kw ),     int( h2 + kh ) ),
+        ] )
+    bar = bar1.united( bar2 )
     painter.drawPolygon( bar )
-
-# Display
-def Display_Icon( self, name ):
+# Cursor Icon
+def Icon_Display( name ):
     # name = "warning"
     # Variables
     image_size = 500
@@ -97,62 +232,11 @@ def Display_Icon( self, name ):
     painter.drawPixmap( icon_margin, icon_margin, qicon )
     painter.end()
     return qpixmap
-
-# Cursor
-def Cursor_Icon( self ):
-    if ( self.state_pickcolor == True and self.state_press == True ):
+def Icon_Cursor( state_pickcolor, state_press ):
+    if ( state_pickcolor == True and state_press == True ):
         QApplication.setOverrideCursor( Qt.CrossCursor )
     else:
         QApplication.restoreOverrideCursor()
-
-# Drag
-def Insert_Drag( self, path, clip ):
-    if path != None:
-        self.drag = True
-        self.SIGNAL_DRAG.emit( path, clip )
-# Drop
-def Drop_Inside( self, event, local_only ):
-    # Mimedata
-    mimedata = event.mimeData()
-
-    # Has Boolean
-    has_text = mimedata.hasText()
-    has_html = mimedata.hasHtml()
-    has_urls = mimedata.hasUrls()
-    has_image = mimedata.hasImage()
-    # has_color = mimedata.hasColor()
-
-    # Data
-    data_text = mimedata.text()
-    data_html = mimedata.html()
-    data_urls = mimedata.urls()
-    data_image = mimedata.imageData()
-    # data_color = mimedata.colorData()
-
-    # Construct Mime Data
-    mime_data = []
-    if ( has_text == True and has_html == True ):
-        if local_only == False:
-            mime_data.append( data_text )
-    elif ( has_text == True and has_html == False ):
-        for i in range( 0, len( data_urls ) ):
-            qurl = data_urls[i].toLocalFile()
-            exists = os.path.exists( qurl )
-            if exists == True:
-                mime_data.append( qurl )
-
-    # Sort
-    if len( mime_data ) > 0:
-        mime_data.sort()
-
-    # Return
-    return mime_data
-
-# Path
-def Path_Copy( self, path ):
-    copy = QApplication.clipboard()
-    copy.clear()
-    copy.setText( path )
 # Color Picker
 def ColorPicker_Event( self, ex, ey, qimage_grab, state_press ):
     if ( self.state_pickcolor == True and qimage_grab != None ):
@@ -166,20 +250,20 @@ def ColorPicker_Event( self, ex, ey, qimage_grab, state_press ):
         py = point.y() - ( colorpicker_size * 0.5 )
         # Pixel RGB ( 0-1 )
         pixel = qimage_grab.pixelColor( ex , ey )
-        red = pixel.redF()
+        red   = pixel.redF()
         green = pixel.greenF()
-        blue = pixel.blueF()
+        blue  = pixel.blueF()
 
         # Apply Color
-        if self.pigment_o != None:
+        if self.pigmento_picker != None:
             if state_press == True:
-                self.pigment_o.API_Input_Kelvin( 6500 )
-                cor = self.pigment_o.API_Input_Preview( "RGB", red, green, blue, 0 )
+                cor = self.pigmento_picker.API_Input_Preview( "SRGB", red, green, blue, 0 )
             if state_press == False:
-                cor = self.pigment_o.API_Input_Apply( "RGB", red, green, blue, 0 )
-            red   = cor[ "rgb_d1" ]
-            green = cor[ "rgb_d2" ]
-            blue  = cor[ "rgb_d3" ]
+                cor = self.pigmento_picker.API_Input_Apply( "SRGB", red, green, blue, 0 )
+            red     = cor[ "srgb_1" ]
+            green   = cor[ "srgb_2" ]
+            blue    = cor[ "srgb_3" ]
+            display = cor[ "display" ]
         else:
             active_document = Krita.instance().activeDocument()
             if active_document == None:
@@ -222,7 +306,7 @@ def ColorPicker_Event( self, ex, ey, qimage_grab, state_press ):
             # Clipboard
             clip_board = QApplication.clipboard()
             clip_board.clear()
-            clip_board.setText( f"{ hex_code }" )
+            clip_board.setText( str( hex_code ) )
 def ColorPicker_Render( self, painter, ex, ey ):
     # Values
     ex = Limit_Range( ex, 0, self.ww )
@@ -264,306 +348,703 @@ def ColorPicker_Render( self, painter, ex, ey ):
     mask_reset = QPainterPath()
     mask_reset.addRect( 0, 0, self.ww, self.hh )
     painter.setClipPath( mask_reset )
-# Insert
-def Insert_Check( self ):
+
+# File
+def File_Open_Location( url ):
+    # Variables
+    kernel = str( QSysInfo.kernelType() ) # winnt=WINDOWS, linux=LINUX, darwin=MAC
+    check_file = os.path.isfile( url )
+    check_dir = os.path.isdir( url )
+    check_web = Check_Html( url )
+    # Logic
+    if check_file == True and kernel == "winnt": # Windows
+        url = os.path.normpath( url )
+        file_browser_url = os.path.join( os.getenv( 'WINDIR' ), 'explorer.exe' )
+        subprocess.run( [ file_browser_url, '/select,', url ] )
+        Message_Log( "FILE LOCATION", f"{ url }" )
+    elif check_file == True and kernel in [ linux, darwin ]:
+        url = os.path.normpath( url )
+        dirname = os.path.dirname( url )
+        QDesktopServices.openUrl( QUrl.fromLocalFile( dirname ) )
+        Message_Log( "FILE LOCATION", f"{ dirname }" )
+    elif check_dir:
+        QDesktopServices.openUrl( QUrl.fromLocalFile( url ) )
+        Message_Log( "DIRECTORY", f"{ url }" )
+    elif check_web:
+        webbrowser.open_new( url )
+        Message_Log( "WEB", f"{ url }" )
+    else:
+        Message_Log( "ERROR", "not able to access location" )
+def File_Copy_Path( url ):
+    url = os.path.normpath( url )
+    clipboard = QApplication.clipboard()
+    clipboard.clear()
+    clipboard.setText( url )
+    Message_Log( "COPY PATH", f"{ url }" )
+def File_Copy_Image( url ):
+    url = os.path.normpath( url )
+    qpixmap = QPixmap( url )
+    mimedata = Create_Mime_Data( [ url ], qpixmap )
+    clipboard = QApplication.clipboard()
+    clipboard.clear()
+    clipboard.setMimeData( mimedata )
+    Message_Log( "COPY IMAGE", f"{ url }" )
+
+# Checks
+def Check_Insert():
     doc = Krita.instance().documents()
-    insert = len( doc ) > 0
-    return insert
+    check_insert = len( doc ) > 0
+    return check_insert
+def Check_Vector( url ):
+    try:    check_vector = os.path.basename( url ).endswith( ( ".svg", ".svgz" ) )
+    except: check_vector = False
+    return check_vector
+
+# Insert
+def Insert_Document( self, image_url, clip ):
+    check_exists = os.path.exists( image_url )
+    check_file = os.path.exists( image_url )
+    if check_exists == True and check_file == True:
+        try:
+            # Create Document
+            ki = Krita.instance()
+            document = ki.openDocument( image_url )
+            Application.activeWindow().addView( document )
+            width = document.width()
+            height = document.height()
+            # Crop
+            if clip["cstate"] == True:
+                ad = Krita.instance().activeDocument()
+                ad.crop( int( width * clip["cl"] ), int( height * clip["ct"] ), int( width * clip["cw"] ), int( height * clip["ch"] ) )
+                ad.waitForDone()
+                ad.refreshProjection()
+                ki.action('reset_display').trigger()
+            # Show Message
+            Message_Float( "INSERT", "New Document", "document-new" )
+        except Exception as e:
+            Message_Error( e )
+    else:
+        Message_Error()
+def Insert_Layer( self, image_url, clip ):
+    check_exists = os.path.exists( image_url )
+    check_file = os.path.exists( image_url )
+    check_insert = Check_Insert()
+    if check_exists == True and check_file == True and check_insert == True:
+        check_vector = Check_Vector( image_url )
+        if check_vector == True:
+            Embed_Layer_Vector( self, image_url )
+        else:
+            Embed_Layer_Pixel( self, image_url, clip )
+    else:
+        Message_Error()
+def Insert_Reference( self, image_url, clip ):
+    check_exists = os.path.exists( image_url )
+    check_file = os.path.exists( image_url )
+    check_insert = Check_Insert()
+    if check_exists == True and check_file == True and check_insert == True:
+        Embed_Reference_Pixel( self, image_url, clip )
+    else:
+        Message_Error()
+def Insert_Drag( self, image_url, clip, grid ):
+    check_file = os.path.isfile( image_url )
+    check_dir = os.path.isdir( image_url )
+    if check_file == True and check_dir == False:
+        # List Construct
+        lista = [ image_url ] # first element on the list
+        if grid == True:
+            selection_list = self.Selection_List()
+            count = len( selection_list )
+            for url in selection_list:
+                if url not in lista:
+                    lista.append( url )
+        # Process
+        if len( lista ) > 0:
+            # Variable
+            self.drag = True
+            # Pixmap
+            if os.path.isfile( lista[0] ):
+                qpixmap = Create_Image_Clip( self, lista[0], clip )
+            elif Check_Html( lista[0] ):
+                qpixmap = Download_QPixmap( lista[0] )
+            # Mimedata
+            for item in lista:
+                if os.path.isfile( image_url ):
+                    check_vector = Check_Vector( image_url )
+                    if check_vector == True:
+                        svg_shape = ""
+                        file_item = open( image_url, "r", encoding=encode )
+                        for line in file_item:
+                            svg_shape += line
+                        if svg_shape != "":
+                            mimedata = Create_Mime_Data( svg_shape, qpixmap )
+                    else:
+                        mimedata = Create_Mime_Data( lista, qpixmap )
+                elif Check_Html( image_url ):
+                    mimedata = Create_Mime_Data( lista, qpixmap )
+            # Drag
+            Create_Thumbnail( self, qpixmap, mimedata )
+def Insert_Drop( self, event ):
+    # Mimedata
+    mimedata = event.mimeData()
+    format_id = mimedata.hasFormat( drag_id )
+
+    # Has Boolean
+    has_text = mimedata.hasText()
+    has_html = mimedata.hasHtml()
+    has_urls = mimedata.hasUrls()
+    has_image = mimedata.hasImage()
+    # has_color = mimedata.hasColor()
+
+    # Data
+    data_text = mimedata.text()
+    data_html = mimedata.html()
+    data_urls = mimedata.urls()
+    data_image = mimedata.imageData()
+    # data_color = mimedata.colorData()
+
+    # Construct Mime Data
+    mime_data = list()
+    if ( has_text == True and has_html == True ):
+        regex = r' src="(.*?)\" ' # Finds the "src" hyperlink in html
+        match = re.findall( regex, data_html )
+        for html in match:
+            mime_data.append( html )
+        if data_text in mime_data or len( mime_data ) == 0:
+            mime_data = [ data_text ]
+    elif ( has_text == True and has_html == False ):
+        for url in data_urls:
+            url = url.toLocalFile()
+            mime_data.append( url )
+    # Sort
+    if len( mime_data ) > 0:
+        mime_data.sort()
+    # Return
+    return mime_data, format_id
+# Embed
+def Embed_Layer_Vector( self, image_url ):
+    try:
+        # Variables
+        basename = os.path.basename( image_url )
+        # Read SVG
+        svg_shape = ""
+        file_item = open( image_url, "r", encoding="UTF-8" )
+        for line in file_item:
+            svg_shape += line
+        # Create Layer
+        ad = Krita.instance().activeDocument()
+        rn = ad.rootNode()
+        vl = ad.createVectorLayer( basename )
+        rn.addChildNode( vl, None )
+        # Input Shape to Layer
+        vl.addShapesFromSvg( svg_shape )
+        # Message
+        Message_Float( "INSERT", "Layer Vector", "vectorLayer" )
+    except Exception as e:
+        Message_Error( e )
+def Embed_Layer_Pixel( self, image_url, clip ):
+    try:
+        # Qimage
+        qpixmap = Create_Image_Clip( self, image_url, clip )
+        qimage = qpixmap.toImage()
+        ptr = qimage.constBits()
+        ptr.setsize( qimage.byteCount() )
+        # Create Layer
+        basename = os.path.basename( image_url )
+        ad = Krita.instance().activeDocument()
+        rn = ad.rootNode()
+        pl = ad.createNode( basename, "paintLayer" )
+        pl.setPixelData( bytes( ptr.asarray() ), 0, 0, qimage.width(), qimage.height() )
+        rn.addChildNode( pl, None )
+        ad.refreshProjection()
+        # Message
+        Message_Float( "INSERT", "Layer Pixel", "paintLayer" )
+    except Exception as e:
+        Message_Error( e )
+def Embed_Reference_Pixel( self, image_url, clip ):
+    try:
+        # Image
+        qpixmap = Create_Image_Clip( self, image_url, clip )
+        mimedata = Create_Mime_Data( image_url, qpixmap )
+        clipboard = QApplication.clipboard().setMimeData( mimedata )
+        # Place Image
+        ki = Krita.instance()
+        ki.action( 'paste_as_reference' ).trigger()
+        ad = ki.activeDocument()
+        ad.waitForDone()
+        ad.refreshProjection()
+        # Message
+        Message_Float( "INSERT", "Reference", "krita_tool_reference_images" )
+    except Exception as e:
+        Message_Error( e )
+# Create
+def Create_Image_Clip( self, image_url, clip ):
+    # Default
+    qpixmap = QPixmap( 1, 1 )
+    qpixmap.fill( Qt.transparent )
+    # Reader
+    reader = QImageReader( image_url )
+    reader.setAutoTransform( True )
+    if reader.canRead() == True:
+        # Crop
+        if clip["cstate"] == True:
+            qsize = reader.size()
+            width = qsize.width()
+            height = qsize.height()
+            cl = clip["cl"]
+            ct = clip["ct"]
+            cw = clip["cw"]
+            ch = clip["ch"]
+            qrect = QRect( int( width * cl ), int( height * ct ), int( width * cw ), int( height * ch ) )
+            reader.setClipRect( qrect )
+        qpixmap = QPixmap().fromImageReader( reader )
+        # Scale
+        ad = Krita.instance().activeDocument()
+        if self.insert_original_size == False and ad != None:
+            qpixmap = qpixmap.scaled( ad.width(), ad.height(), Qt.KeepAspectRatio, self.scale_method )
+    return qpixmap
+def Create_Mime_Data( lista, qpixmap ):
+    mime_list = list()
+    mimedata = QMimeData()
+    if Check_Html( lista[0] ):
+        mime_data.append( lista[0] )
+        mimedata.setHtml( lista[0] )
+    else:
+        for url in lista:
+            if os.path.isfile( url ):
+                qurl = QUrl().fromLocalFile( url )
+                mime_list.append( qurl )
+        mimedata.setUrls( mime_list )
+    mime_string = str( mime_list )
+    mimedata.setText( mime_string )
+    mimedata.setData( drag_id, mime_string.encode( encode ) )
+    mimedata.setImageData( qpixmap )
+    return mimedata
+def Create_Thumbnail( self, qpixmap, mimedata ):
+    # Display
+    size = 200
+    if qpixmap.isNull() == False:
+        qpixmap = qpixmap.scaled( size, size, Qt.KeepAspectRatio, Qt.FastTransformation )
+    # Variables
+    ww = int( qpixmap.width() * 0.5 )
+    hh = int( qpixmap.height() * 0.5 )
+    # Drag
+    drag = QDrag( self )
+    drag.setHotSpot( QPoint( ww, hh ) )
+    drag.setMimeData( mimedata )
+    drag.setPixmap( qpixmap )
+    drag.exec_( Qt.CopyAction )
+
+# Information
+def Information_Format( value ):
+    image_format = None
+    if   value == 0:  image_format = "Invalid"
+    elif value == 1:  image_format = "Mono"
+    elif value == 2:  image_format = "MonoLSB"
+    elif value == 3:  image_format = "Indexed8"
+    elif value == 4:  image_format = "RGB32"
+    elif value == 5:  image_format = "ARGB32"
+    elif value == 6:  image_format = "ARGB32_Premultiplied"
+    elif value == 7:  image_format = "RGB16"
+    elif value == 8:  image_format = "ARGB8565_Premultiplied"
+    elif value == 9:  image_format = "RGB666"
+    elif value == 10: image_format = "ARGB6666_Premultiplied"
+    elif value == 11: image_format = "RGB555"
+    elif value == 12: image_format = "ARGB8555_Premultiplied"
+    elif value == 13: image_format = "RGB888"
+    elif value == 14: image_format = "RGB444"
+    elif value == 15: image_format = "ARGB4444_Premultiplied"
+    elif value == 16: image_format = "RGBX8888"
+    elif value == 17: image_format = "RGBA8888"
+    elif value == 18: image_format = "RGBA8888_Premultiplied"
+    elif value == 19: image_format = "BGR30"
+    elif value == 20: image_format = "A2BGR30_Premultiplied"
+    elif value == 21: image_format = "RGB30"
+    elif value == 22: image_format = "A2RGB30_Premultiplied"
+    elif value == 23: image_format = "Alpha8"
+    elif value == 24: image_format = "Grayscale8"
+    elif value == 28: image_format = "Grayscale16"
+    elif value == 25: image_format = "RGBX64"
+    elif value == 26: image_format = "RGBA64"
+    elif value == 27: image_format = "RGBA64_Premultiplied"
+    elif value == 29: image_format = "BGR888"
+    elif value == 30: image_format = "RGBX16FPx4"
+    elif value == 31: image_format = "RGBA16FPx4"
+    elif value == 32: image_format = "RGBA16FPx4_Premultiplied"
+    elif value == 33: image_format = "RGBX32FPx4"
+    elif value == 34: image_format = "RGBA32FPx4"
+    elif value == 35: image_format = "RGBA32FPx4_Premultiplied"
+    elif value == 36: image_format = "CMYK8888"
+    return image_format
+def Information_Fit( boolean ):
+    if   boolean == True:    fit = Qt.KeepAspectRatio
+    elif boolean == False:   fit = Qt.KeepAspectRatioByExpanding
+    return fit
+def Information_Orientation( reader ):
+    """
+    QImageIOHandler.TransformationNone
+    QImageIOHandler.TransformationMirror
+    QImageIOHandler.TransformationFlip
+    QImageIOHandler.TransformationRotate180
+    QImageIOHandler.TransformationRotate90
+    QImageIOHandler.TransformationMirrorAndRotate90
+    QImageIOHandler.TransformationFlipAndRotate90
+    QImageIOHandler.TransformationRotate270
+    """
+    rotate = False
+    rt = reader.transformation()
+    if rt == QImageIOHandler.TransformationRotate90:            rotate = True
+    if rt == QImageIOHandler.TransformationFlipAndRotate90:     rotate = True
+    if rt == QImageIOHandler.TransformationRotate270:           rotate = True
+    return rotate
+
+# Pigment.O
+def Color_Analyse( pigmento_picker, qimage ):
+    if ( pigmento_picker != None and qimage.isNull() == False ):
+        report = pigmento_picker.API_Image_Analyse( qimage )
+        Message_Log( "ANALYSE", f"{ report }" )
+    else:
+        Message_Log( "ERROR", "Pigment.O Picker not accessible" )
+def Color_LUT_to_Image( pigmento_sampler, list_url ):
+    if pigmento_sampler != None:
+        report = pigmento_sampler.API_LUT_to_Image( list_url )
+        Message_Log( "LUT to IMAGE", f"{ report }" )
+    else:
+        Message_Log( "ERROR", "Pigment.O Sampler not accessible" )
 
 #endregion
 #region Panels
 
-class ImagineBoard_Preview( QWidget ):
+class ImagineBoard_Preview( QtWidgets.QWidget ):
     # General
-    SIGNAL_DRAG = QtCore.pyqtSignal( [ str, dict ] )
-    SIGNAL_DROP = QtCore.pyqtSignal( list )
-    # Preview
-    SIGNAL_MODE = QtCore.pyqtSignal( int )
-    SIGNAL_INCREMENT = QtCore.pyqtSignal( int )
+    PREVIEW_PARENT = QtCore.pyqtSignal()
+    PREVIEW_LOAD = QtCore.pyqtSignal( str, str, int )
+    PREVIEW_MODE = QtCore.pyqtSignal( int, bool )
+    PREVIEW_DROP = QtCore.pyqtSignal( list )
+    PREVIEW_INCREMENT = QtCore.pyqtSignal( int )
     # Menu
-    SIGNAL_FUNCTION = QtCore.pyqtSignal( list )
-    SIGNAL_PIN_IMAGE = QtCore.pyqtSignal( [ dict, dict ] )
-    SIGNAL_RANDOM = QtCore.pyqtSignal()
-    SIGNAL_FULL_SCREEN = QtCore.pyqtSignal( bool )
-    SIGNAL_LOCATION = QtCore.pyqtSignal( str )
-    SIGNAL_ANALYSE = QtCore.pyqtSignal( [ QImage ] )
-    SIGNAL_NEW_DOCUMENT = QtCore.pyqtSignal( [ str, dict ] )
-    SIGNAL_INSERT_LAYER = QtCore.pyqtSignal( [ str, dict ] )
-    SIGNAL_INSERT_REFERENCE = QtCore.pyqtSignal( [ str, dict ] )
+    PREVIEW_PIN_INSERT = QtCore.pyqtSignal( str, float, float, str, str, dict )
+    PREVIEW_RANDOM = QtCore.pyqtSignal()
+    PREVIEW_FULL_SCREEN = QtCore.pyqtSignal( bool )
     # UI
-    SIGNAL_EXTRA_LABEL = QtCore.pyqtSignal( str )
-    SIGNAL_EXTRA_PANEL = QtCore.pyqtSignal( bool )
-    SIGNAL_EXTRA_VALUE = QtCore.pyqtSignal( int )
-    SIGNAL_EXTRA_MAX = QtCore.pyqtSignal( int )
-
+    PREVIEW_PC_VALUE = QtCore.pyqtSignal( int )
+    PREVIEW_PC_MAX = QtCore.pyqtSignal( int )
+    PREVIEW_PB_VALUE = QtCore.pyqtSignal( int )
+    PREVIEW_PB_MAX = QtCore.pyqtSignal( int )
 
     # Init
     def __init__( self, parent ):
         super( ImagineBoard_Preview, self ).__init__( parent )
         self.Variables()
+    def sizeHint( self ):
+        return QtCore.QSize( 500,500 )
+
+    # Variables
     def Variables( self ):
         # Widget
         self.ww = 1
         self.hh = 1
         self.w2 = 0.5
         self.h2 = 0.5
-
+        self.state_maximized = False
         # Event
         self.ox = 0
         self.oy = 0
         self.ex = 0
         self.ey = 0
+        # Interaction
+        self.operation = None
 
-        # Display
-        self.preview_path = None
-        self.preview_qpixmap = None
-        self.scale_method = Qt.FastTransformation
-
-        # Compact
-        self.file_search = []
-
-        # State
+        # State General
         self.state_maximized = False
         self.state_press = False
         self.state_pickcolor = False
+        # State Preview
+        self.state_original = False
+        # State Overlay
         self.state_clip = False
-        self.state_animation = False
-        self.state_compact = False
+        self.state_gridline = False
+        self.state_underlayer = False
         self.state_information = False
-        self.state_vector = False
-        # Interaction
-        self.operation = None
-        # Camera
-        self.pcmx = 0
-        self.pcmy = 0
-        self.pcz = 1
-        self.cmx = 0 # Moxe X
-        self.cmy = 0 # Move Y
-        self.cz = 1 # Zoom
-        self.display = False
+
+        # Preview
+        self.preview_url = None
+        self.preview_qpixmap = None
+        self.preview_state = None # None "FILE" "ANIM" "COMP" "DIR" "WEB"
+        # Read
+        self.preview_color_name = QColor( "#bfbfbf" )
+        self.preview_format = None
+        self.preview_image_format = None
+        self.preview_text = None
+        self.preview_dpr = None
+        # Animation
+        self.anim_sequence = list() # list of qpixmaps
+        self.anim_frame = 0
+        self.anim_count = 0
+        self.anim_rate = 33
+        self.anim_play = False # self.anim_timer.isActive()
+        self.Anim_Timer()
+        # Compact
+        self.comp_archive = None
+        self.comp_path = list() # list of paths inside the zip file
+        self.comp_index = 0
+        self.comp_count = 0
+
+        # Grid Lines
+        self.gridline_x = 3
+        self.gridline_y = 3
+        # Information
+        self.info_edge = 160
 
         # Colors
-        self.color_1 = QColor( "#ffffff" )
-        self.color_2 = QColor( "#000000" )
-        self.color_alpha = QColor( 0, 0, 0, 50 )
-        self.color_clip = QColor( 0, 0, 0, 100 )
-
-        # Function>>
-        self.function_operation = ""
-
-        # Edit
-        self.edit_greyscale = False
-        self.edit_invert_h = False
-        self.edit_invert_v = False
-
+        self.c_lite = QColor( "#ffffff" )
+        self.c_dark = QColor( "#000000" )
+        self.c_chrome = QColor( "#3daee9" )
+        self.c_text = QColor( "#ffffff" )
+        self.transparent = QColor( 0, 0, 0, 0 )
+        self.underlayer_color = QColor( "#7f7f7f" )
         # Color Picker
-        self.pigment_o = None
+        self.pigmento_picker = None
+        self.pigmento_sampler = None
         self.qimage_grab = None
         self.color_active = QColor( 0, 0, 0 )
         self.color_previous = QColor( 0, 0, 0 )
 
-        # Bounding Box
-        self.bl = 0
-        self.bt = 0
-        self.br = 0
-        self.bb = 0
-        self.bw = self.br - self.bl
-        self.bh = self.bb - self.bt
+        # Edit
+        self.edit_greyscale = False
+        self.edit_invert_x = False
+        self.edit_invert_y = False
 
         # Clip
         self.clip_node = None
-        self.cl = 0.1  # 0-1
-        self.ct = 0.1  # 0-1
-        self.cr = 0.9  # 0-1
-        self.cb = 0.9  # 0-1
-        self.cw = self.cr - self.cl  # 0-1
-        self.ch = self.cb - self.ct  # 0-1
+        self.clip_l = 0.1  # 0-1
+        self.clip_t = 0.1  # 0-1
+        self.clip_r = 0.9  # 0-1
+        self.clip_b = 0.9  # 0-1
+        self.clip_w = self.clip_r - self.clip_l
+        self.clip_h = self.clip_b - self.clip_t
+        self.clip_image = { 
+            "cstate" : self.state_clip,
+            "cl": self.clip_l,
+            "ct": self.clip_t,
+            "cw": self.clip_w,
+            "ch": self.clip_h,
+            }
+        # Draw
+        self.draw_px = 0
+        self.draw_py = 0
+        self.draw_width = 1
+        self.draw_height = 1
+
+        # System
+        self.insert_original_size = False
+        self.scale_method = Qt.SmoothTransformation
 
         # Drag and Drop
         self.setAcceptDrops( True )
         self.drop = False
         self.drag = False
 
-        # Animation
-        self.anim_sequence = []
-        self.anim_frame = 0
-        self.anim_count = 0
-        self.anim_rate = 33
-        self.Anim_Timer()
-
-        # Compact
-        self.comp_path = []
-        self.comp_sequence = []
-        self.comp_index = 0
-        self.comp_count = 0
-    def sizeHint( self ):
-        return QtCore.QSize( 5000,5000 )
-
     # Relay
-    def Set_FileSearch( self, file_search ):
-        self.file_search = file_search
-    def Set_Pigment_O( self, plugin ):
-        self.pigment_o = plugin
-    def Set_Theme( self, color_1, color_2 ):
-        self.color_1 = color_1
-        self.color_2 = color_2
+    def Set_Pigment_O( self, pigmento_picker, pigmento_sampler ):
+        self.pigmento_picker = pigmento_picker
+        self.pigmento_sampler = pigmento_sampler
+    def Set_Theme( self, c_lite, c_dark, c_chrome, c_text ):
+        self.c_lite = QColor( c_lite )
+        self.c_dark = QColor( c_dark )
+        self.c_chrome = QColor( c_chrome )
+        self.c_text = QColor( c_text )
+        Style_Icon( self )
+        self.update()
     def Set_Size( self, ww, hh, state_maximized ):
+        # Variables
         self.ww = ww
         self.hh = hh
         self.w2 = ww * 0.5
         self.h2 = hh * 0.5
         self.state_maximized = state_maximized
         self.resize( ww, hh )
-    def Set_Function( self, function_operation ):
-        self.function_operation = function_operation
+        # Icons
+        self.qpixmap_dir, self.dir_size = Item_Icon( self.qicon_dir, self.ww, self.hh )
+        if self.preview_state == "DIR":
+            self.preview_qpixmap, size = Fit_Directory( self.preview_url, self.ww, self.hh )
+        # Update
+        self.update()
+    def Set_ColorPicker( self, boolean ):
+        self.state_pickcolor = boolean 
+        self.update()
+    def Set_Insert_Original_Size( self, boolean ):
+        self.insert_original_size = boolean
+        self.update()
+    def Set_Gridline_Division( self, gridline_x, gridline_y ):
+        self.gridline_x = gridline_x
+        self.gridline_y = gridline_y
+        self.update()
+    def Set_Gridline_State( self, boolean ):
+        self.state_gridline = boolean
+        self.update()
+    def Set_Underlayer_Color( self, underlayer_color ):
+        self.underlayer_color = QColor( underlayer_color )
+        self.update()
+    def Set_Underlayer_State( self, boolean ):
+        self.state_underlayer = boolean
         self.update()
     def Set_Scale_Method( self, scale_method ):
         self.scale_method = scale_method
         self.update()
-    def Set_Display( self, boolean ):
-        self.display = boolean
-        self.update()
 
     # Display
-    def Display_Reset( self, state ):
+    def Preview_Reset( self ):
         # Variables
-        if state == True:
-            self.state_animation = False
-            self.state_compact = False
+        self.state_clip = False
         # Functions
-        self.Camera_Reset()
-        self.Clip_Reset()
         self.Edit_Reset()
+        self.Camera_Reset()
         self.Anim_Pause()
-    def Display_Default( self ):
-        self.Display_Reset( True )
-        self.preview_path = None
-        self.preview_qpixmap = None
-        self.update()
-        self.Camera_Grab()
-    def Display_Path( self, image_path ):
-        qpixmap = QPixmap( image_path )
-        if qpixmap.isNull() == False:
-            if self.preview_path != image_path:
-                self.Display_Reset( True )
-                self.Check_Vector( image_path )
-            self.preview_qpixmap = qpixmap
-        else:
-            self.preview_qpixmap = True
-        self.preview_path = image_path
-        self.update()
-        self.Camera_Grab()
-    def Display_QPixmap( self, qpixmap ):
-        if qpixmap.isNull() == False:
-            self.Display_Reset( True )
-            self.preview_path = None
-            self.preview_qpixmap = qpixmap
-            self.update()
-            self.Camera_Grab()
-        else:
-            self.Display_Default()
-    def Display_Animation( self, image_path ):
-        qmovie = QMovie( image_path )
-        if qmovie.isValid() == True:
+    def Preview_Path( self, preview_url, preview_state, update ):
+        if self.preview_url != preview_url and preview_state != None or update == True:
+            # Reset
+            self.Preview_Reset()
+            self.PREVIEW_PC_VALUE.emit( 0 )
             # Variables
-            if self.preview_path != image_path:
-                self.Display_Reset( True )
-            self.preview_path = image_path
-            # Frames
-            frames = qmovie.frameCount()
-            speed = qmovie.speed() / 100
-            if frames == 1:
-                self.Display_Path( image_path )
-            else:
-                # Variables
-                self.state_animation = True
-                self.anim_frame = 0
-                # Frames
-                rate = []
-                sequence = []
+            self.preview_url = preview_url
+            self.preview_state = preview_state
+
+            # Reader
+            reader = QImageReader( preview_url )
+            # Infomation
+            self.preview_format = reader.format()
+            self.preview_image_format = Information_Format( reader.imageFormat() )
+            qcolor = reader.backgroundColor()
+            self.preview_color_name = qcolor.name( QColor.HexArgb )
+            # Meta Data
+            preview_text = list()
+            text_keys = reader.textKeys()
+            if metadata_key in text_keys:
+                index = text_keys.index( metadata_key )
+                text_keys.pop( index )
+                text_keys.insert( 0, metadata_key )
+            for key in text_keys:
+                text = reader.text( key )
+                preview_text.append( ( key, text ) )
+            self.preview_text = preview_text
+
+            # Variables
+            qpixmap = None
+            # QPixmap
+            if preview_state in [ "FILE", "IMG" ]:
+                reader.setAutoTransform( True )
+                qpixmap = QPixmap().fromImageReader( reader )
+                if qpixmap.isNull() == True:
+                    qpixmap = None
+                self.PREVIEW_PC_MAX.emit( 1 )
+            elif preview_state == "ANIM":
+                # Read
+                anim_sequence = list()
+                anim_rate = list()
+                frames = reader.imageCount()
                 for i in range( 0, frames ):
-                    qmovie.jumpToFrame( i )
-                    delay = qmovie.nextFrameDelay()
-                    rate.append( delay )
-                    qpixmap = qmovie.currentPixmap()
+                    reader.jumpToImage( i )
+                    qpixmap = QPixmap().fromImageReader( reader )
                     if qpixmap.isNull() == False:
-                        sequence.append( qpixmap )
-                mean = Stat_Mean( rate )
-                # Variables
-                self.anim_sequence = sequence
-                self.anim_count = len( sequence ) - 1
-                self.anim_rate = int( mean * speed )
-                # Animation
+                        anim_sequence.append( qpixmap )
+                        anim_rate.append( reader.nextImageDelay() )
+                anim_mean = Stat_Mean( anim_rate )
+                # Animation Variables
+                if len( anim_sequence ) > 0:
+                    qpixmap = anim_sequence[0]
+                    if qpixmap.isNull() == True:
+                        qpixmap = None
+                    self.anim_sequence = anim_sequence
+                    self.anim_frame = 0
+                    self.anim_count = frames - 1
+                    self.anim_rate = anim_mean
+                self.PREVIEW_PC_MAX.emit( self.anim_count )
+            elif preview_state == "COMP":
+                # Open Archive
+                comp_path = list()
+                self.comp_archive = zipfile.ZipFile( preview_url, "r" )
+                name_list = self.comp_archive.namelist()
+                for name in name_list:
+                    basename = os.path.basename( name )
+                    extension = basename.split( "." )[-1]
+                    if extension in file_search:
+                        comp_path.append( name )
+                # Com Variables
+                if len( comp_path ) > 0:
+                    # Krita Cover Image
+                    comp_path = Compressed_Sort( comp_path )
+                    check_kra = self.preview_url.endswith( file_krita )
+                    check_merge = merged_png in comp_path
+                    check_preview = preview_png in comp_path
+                    if check_kra and check_preview == True:
+                        index = comp_path.index( preview_png )
+                        comp_path.insert( 0, comp_path.pop( index ) )
+                    if check_kra and check_merge == True:
+                        index = comp_path.index( merged_png )
+                        comp_path.insert( 0, comp_path.pop( index ) )
+                    # Archive
+                    qpixmap = Compressed_QPixmap( self.comp_archive, comp_path[0] )
+                    self.comp_path = comp_path
+                    self.comp_index = 0
+                    self.comp_count = len( comp_path ) - 1
+                self.PREVIEW_PC_MAX.emit( self.comp_count )
+            elif preview_state == "PDF":
+                self.Preview_Default()
+            elif preview_state == "DIR":
+                qpixmap, size = Fit_Directory( preview_url, self.ww, self.hh )
+                self.PREVIEW_PC_MAX.emit( 1 )
+            elif preview_state == "WEB":
+                qpixmap = Download_QPixmap( preview_url )
+                self.PREVIEW_PC_MAX.emit( 1 )
+            # Variables
+            self.preview_qpixmap = qpixmap
+
+            # Activate
+            if preview_state == "ANIM" and self.anim_count > 0:
                 self.Anim_Play()
-                # UI
-                self.SIGNAL_EXTRA_PANEL.emit( True )
-                self.SIGNAL_EXTRA_MAX.emit( frames - 1 )
-                self.SIGNAL_EXTRA_VALUE.emit( 0 )
-                # Garbage
-                del qmovie
-            self.update()
-        else:
-            self.Display_Path( image_path )
-    def Display_Compact( self, zip_path ):
-        # Variables
-        self.comp_path = []
-        self.comp_sequence = []
-        self.comp_index = 0
-        # Open Zip File
-        self.Display_Reset( True )
-        if zipfile.is_zipfile( zip_path ):
+            if preview_state == "COMP" and self.comp_count > 0:
+                self.Comp_Index( 0 )
+        # Update
+        self.update()
+        self.Camera_Grab()
+    def Preview_QPixmap( self, url, qpixmap ):
+        if qpixmap.isNull() == False:
+            # Reset
+            self.Preview_Reset()
             # Variables
-            self.state_compact = True
-            self.preview_path = zip_path
-            # Archive
-            self.comp_archive = zipfile.ZipFile( zip_path, "r" )
-            name_list = self.comp_archive.namelist()
-            for name in name_list:
-                try:
-                    if name.split( "." )[1] in self.file_search:
-                        self.comp_path.append( name )
-                except:
-                    pass
-        # Display
-        if len( self.comp_path ) > 0:
+            self.preview_state = "WEB"
+            self.preview_url = url
+            self.preview_qpixmap = qpixmap
+        # Update
+        self.update()
+        self.Camera_Grab()
+    def Preview_QImage( self, url, qimage ):
+        if qimage.isNull() == False:
+            # Reset
+            self.Preview_Reset()
             # Variables
-            self.preview_qpixmap = self.Comp_Read( self.comp_archive, self.comp_path[self.comp_index] )
-            self.comp_count = len( self.comp_path ) - 1
-            # UI
-            self.SIGNAL_EXTRA_PANEL.emit( True )
-            self.SIGNAL_EXTRA_MAX.emit( self.comp_count )
-            self.SIGNAL_EXTRA_VALUE.emit( 0 )
-            self.Extra_Label( True )
-            # Update
-            self.update()
-            self.Camera_Grab()
-        else:
-            self.Display_Path( zip_path )
- 
-    # Draw
-    def Draw_Render( self, qpixmap ):
-        # QPixmap
-        if self.display == False:
-            draw = qpixmap.scaled( int( self.ww * self.cz ), int( self.hh * self.cz ), Qt.KeepAspectRatio, self.scale_method )
-        else:
-            ww = qpixmap.width()
-            hh = qpixmap.height()
-            draw = qpixmap.scaled( int( ww * self.cz ), int( hh * self.cz ), Qt.KeepAspectRatio, self.scale_method )
-        self.bw = draw.width()
-        self.bh = draw.height()
+            self.preview_state = "WEB"
+            self.preview_url = url
+            self.preview_qpixmap = QPixmap().fromImage( qimage )
+        # Update
+        self.update()
+        self.Camera_Grab()
+    def Preview_Default( self ):
+        # Reset
+        self.Preview_Reset()
         # Variables
-        self.bl = self.w2 - ( self.bw * 0.5 ) + ( self.cmx * self.cz )
-        self.bt = self.h2 - ( self.bh * 0.5 ) + ( self.cmy * self.cz )
-        self.br = self.bl + self.bw
-        self.bb = self.bt + self.bh
-        # Return
-        return draw
-    def Draw_Clip( self, qpixmap ):
-        if self.state_clip == True:
-            w = self.preview_qpixmap.width()
-            h = self.preview_qpixmap.height()
-            qpixmap = qpixmap.copy( int( w * self.cl ), int( h * self.ct ), int( w * self.cw ), int( h * self.ch ) )
-        return qpixmap
+        self.preview_state = None
+        self.preview_url = None
+        self.preview_qpixmap = None
+        self.anim_sequence = None
+        self.comp_archive = None
+        self.comp_path = None
+        # Signals
+        self.PREVIEW_PC_VALUE.emit( 0 )
+        self.PREVIEW_PC_MAX.emit( 1 )
+        # Update
+        self.update()
+        self.Camera_Grab()
 
     # Animation
     def Anim_Timer( self ):
@@ -571,150 +1052,87 @@ class ImagineBoard_Preview( QWidget ):
         self.anim_timer.timeout.connect( lambda: self.Anim_Increment( +1 ) )
         self.anim_timer.stop()
     def Anim_Increment( self, increment ):
-        if self.state_animation == True:
+        if self.preview_state == "ANIM":
             self.anim_frame = Limit_Loop( int( self.anim_frame + increment ), self.anim_count )
             self.preview_qpixmap = self.anim_sequence[ self.anim_frame ]
-            self.SIGNAL_EXTRA_VALUE.emit( self.anim_frame )
+            self.PREVIEW_PC_VALUE.emit( self.anim_frame )
             self.update()
     def Anim_Play( self ):
-        if self.state_animation == True:
-            self.anim_timer.start( self.anim_rate )
-            self.Extra_Label( False )
+        if self.preview_state == "ANIM":
+            self.anim_play = True
+            self.anim_timer.start( int( self.anim_rate ) )
     def Anim_Pause( self ):
-        self.anim_timer.stop()
-        self.Extra_Label( True )
+        try:
+            self.anim_play = False
+            self.anim_timer.stop()
+        except:
+            pass
     def Anim_Back( self ):
-        if ( self.state_animation == True and self.anim_timer.isActive() == False ):
+        if ( self.preview_state == "ANIM" and self.anim_play == False ):
             self.Anim_Increment( -1 )
-            self.Extra_Label( True )
     def Anim_Forward( self ):
-        if ( self.state_animation == True and self.anim_timer.isActive() == False ):
+        if ( self.preview_state == "ANIM" and self.anim_play == False ):
             self.Anim_Increment( +1 )
-            self.Extra_Label( True )
     def Anim_Frame( self, frame ):
-        if self.state_animation == True:
+        if self.preview_state == "ANIM":
             self.anim_frame = Limit_Loop( int( frame ), self.anim_count )
             self.preview_qpixmap = self.anim_sequence[ self.anim_frame ]
-            if self.anim_timer.isActive() == False:
-                self.Extra_Label( True )
-                self.update()
-    # Animation Export
-    def Anim_Export_Cycle( self ):
-        if self.state_animation == True:
-            for i in range( 0, len( self.anim_sequence ) ):
-                self.Anim_Export_Index( i )
-    def Anim_Export_Index( self, index ):
-        if self.state_animation == True:
-            # Construct New Path
-            path = os.path.split( self.preview_path )
-            directory = path[0]
-            split = os.path.splitext( path[1] )
-            name = split[0]
-            extension = split[1]
-
-            # Variables
-            name_new = f"{ name }_{ str( index ).zfill( 4 ) }.png"
-            save_path = os.path.join( directory, name_new )
-            exists = os.path.exists( save_path )
-            if exists == False:
-                screenshot_qpixmap = self.anim_sequence[ index ]
-                screenshot_qpixmap.save( save_path )
-                # Logger
-                try:QtCore.qDebug( f"Imagine Board | SCREENSHOT { index }:{ self.frame_count }" )
-                except:pass
-                # Garbage
-                del screenshot_qpixmap
-
-    # Compact
-    def Comp_Read( self, archive, name ):
-        if self.state_compact == True:
-            try:
-                extract = archive.open( name )
-                data = extract.read()
-                qpixmap = QPixmap()
-                qpixmap.loadFromData( data )
-            except:
-                qpixmap = None
-            return qpixmap
-    def Comp_Increment( self, increment ):
-        if self.state_compact == True:
-            # Preparation
-            self.Display_Reset( False )
-            # Index
-            comp_index = Limit_Range( self.comp_index + increment, 0, self.comp_count )
-            if self.comp_index != comp_index:
-                self.comp_index = comp_index
-                self.preview_qpixmap = self.Comp_Read( self.comp_archive, self.comp_path[self.comp_index] )
-    	    # Signals
-            self.SIGNAL_EXTRA_VALUE.emit( self.comp_index )
+            self.PREVIEW_PC_VALUE.emit( self.anim_frame )
             self.update()
-            self.Camera_Grab()
+
+    # Compressed
     def Comp_Back( self ):
-        if self.state_compact == True:
-            self.Comp_Increment( -1 )
-            self.Extra_Label( True )
+        if self.preview_state == "COMP":
+            self.Comp_Index( self.comp_index - 1 )
     def Comp_Forward( self ):
-        if self.state_compact == True:
-            self.Comp_Increment( +1 )
-            self.Extra_Label( True )
-    def Comp_Index( self, index ):
-        if self.state_compact == True:
-            if self.comp_index != index:
-                self.Display_Reset( False )
-                self.comp_index = Limit_Range( index, 0, self.comp_count )
-                self.preview_qpixmap = self.Comp_Read( self.comp_archive, self.comp_path[self.comp_index] )
-                self.Extra_Label( True )
+        if self.preview_state == "COMP":
+            self.Comp_Index( self.comp_index + 1 )
+    def Comp_Index( self, comp_index ):
+        if self.preview_state == "COMP":
+            self.comp_index = Limit_Range( comp_index, 0, self.comp_count )
+            self.preview_qpixmap = Compressed_QPixmap( self.comp_archive, self.comp_path[ self.comp_index ] )
+            self.PREVIEW_PC_VALUE.emit( comp_index ) # values is out of range, it is fixed outside
             self.update()
-            self.Camera_Grab()
-    # Compct Export
-    def Comp_Export_Index( self, index ):
-        if self.state_compact == True:
-            # File Path
-            file_directory = os.path.dirname( self.preview_path )
-            file_basename = os.path.basename( self.preview_path )
-            file_name = os.path.splitext( file_basename )[0]
-            # Zip Path
-            zip_namelist = self.comp_path[self.comp_index]
-            zip_basename = os.path.basename( os.path.abspath( zip_namelist ))
-            # Formating
-            file_name    = file_name.replace( " ", "_" )
-            zip_basename = zip_basename.replace( " ", "_" )
-            join_name = f"{ file_name }_{ zip_basename }"
-            save_location = os.path.join( file_directory, join_name )
-            # Image Save
-            qpixmap = self.Comp_Read( self.comp_archive, zip_namelist )
-            exists = os.path.exists( save_location )
-            if exists == False and qpixmap.isNull() == False:
-                qpixmap.save( save_location )
-            else:
-                string = f"Imagine Board | ERROR zip file not saved"
-                QMessageBox.information( QWidget(), i18n( "Warnning" ), i18n( string ) )
-
-    # Extra UI
-    def Extra_Label( self, mode ):
-        string = ""
-        if ( self.state_animation == True and mode == True ) == True:
-            string = f"{ self.anim_frame }:{ self.anim_count }"
-        if ( self.state_compact == True and mode == True and len( self.comp_path ) > 0 ) == True:
-            string = f"{ self.comp_path[self.comp_index] }"
-        self.SIGNAL_EXTRA_LABEL.emit( string )
 
     # Camera
     def Camera_Reset( self ):
-        self.cmx = 0
-        self.cmy = 0
-        self.cz = 1
+        self.pcam_x = 0
+        self.pcam_y = 0
+        self.pcam_z = 1
+        self.pcam_r = 0
+        self.cam_x = 0 # Moxe X
+        self.cam_y = 0 # Move Y
+        self.cam_z = 1 # Zoom
+        self.cam_r = 0 # Rotate
+        self.cam_m = 15
     def Camera_Previous( self ):
-        self.pcmx = self.cmx
-        self.pcmy = self.cmy
-        self.pcz = self.cz
+        self.pcam_x = self.cam_x
+        self.pcam_y = self.cam_y
+        self.pcam_r = self.cam_r
+        self.pcam_z = self.cam_z
     def Camera_Move( self, ex, ey ):
-        if self.cz != 0:
-            self.cmx = self.pcmx + ( ( ex - self.ox ) / self.cz )
-            self.cmy = self.pcmy + ( ( ey - self.oy ) / self.cz )
+        if self.cam_z != 0:
+            self.cam_x = self.pcam_x + ( ( ex - self.ox ) / self.cam_z )
+            self.cam_y = self.pcam_y + ( ( ey - self.oy ) / self.cam_z )
+    def Camera_Swap( self, ex, ey ):
+        dx = ex - self.ox
+        dy = ey - self.oy
+        if abs( dx ) > self.cam_m and abs( dx ) > abs( dy ):
+            self.ox = ex
+            self.oy = ey
+            self.operation = "camera_rotation"
+        if abs( dy ) > self.cam_m and abs( dy ) > abs( dx ):
+            self.ox = ex
+            self.oy = ey
+            self.operation = "camera_scale"
+    def Camera_Rotation( self, ex, ey ):
+        factor = 5
+        rotate = self.pcam_r - ( ( ex - self.ox ) / factor )
+        self.cam_r = int( Limit_Looper( rotate, 360 ) )
     def Camera_Scale( self, ex, ey ):
         factor = 200
-        self.cz = Limit_Range( self.pcz - ( ( ey - self.oy ) / factor ), 0, 100 )
+        scale = self.pcam_z - ( ( ey - self.oy ) / factor )
+        self.cam_z = Limit_Range( scale, 0, 100 )
     def Camera_Grab( self ):
         try:self.qimage_grab = self.grab().toImage()
         except:pass
@@ -728,34 +1146,210 @@ class ImagineBoard_Preview( QWidget ):
         dx = ex - self.ox
         dy = ey - self.oy
         if dx >= factor:
-            self.SIGNAL_INCREMENT.emit( +1 )
+            self.PREVIEW_INCREMENT.emit( +1 )
             self.Pagination_Reset( ex, ey )
         if dx <= -factor:
-            self.SIGNAL_INCREMENT.emit( -1 )
+            self.PREVIEW_INCREMENT.emit( -1 )
             self.Pagination_Reset( ex, ey )
         if dy >= factor:
-            self.SIGNAL_INCREMENT.emit( -1 )
+            self.PREVIEW_INCREMENT.emit( -1 )
             self.Pagination_Reset( ex, ey )
         if dy <= -factor:
-            self.SIGNAL_INCREMENT.emit( +1 )
+            self.PREVIEW_INCREMENT.emit( +1 )
             self.Pagination_Reset( ex, ey )
 
+    # Context Menu
+    def Context_Menu( self, event ):
+        #region Variables
+
+        # State Update
+        self.state_press = False
+        Icon_Cursor( self.state_pickcolor, self.state_press )
+
+        # Variables
+        check_insert = Check_Insert()
+        check_vector = Check_Vector( self.preview_url )
+        ppp = self.preview_url == None or self.preview_qpixmap == None
+        # Clip
+        if self.state_clip == True:
+            string_clip = " [CLIP]"
+            qpixmap = self.Clip_Crop( self.preview_qpixmap )
+        else:
+            string_clip = ""
+            qpixmap = self.preview_qpixmap
+        clip = { 
+            "cstate" : self.state_clip,
+            "cl": self.clip_l,
+            "ct": self.clip_t,
+            "cw": self.clip_r - self.clip_l,
+            "ch": self.clip_b - self.clip_t,
+            }
+
+        #endregion
+        #region Menu
+
+        # Menu
+        qmenu = QMenu( self )
+        # General
+        action_pin_reference = qmenu.addAction( "Pin Reference" + string_clip )
+        action_clip_image = qmenu.addAction( "Clip Image" )
+        qmenu.addSeparator()
+        # Preview
+        menu_preview = qmenu.addMenu( "Preview" )
+        action_preview_original = menu_preview.addAction( "Original Size" )
+        action_preview_random = menu_preview.addAction( "Random Index" )
+        # File Single
+        menu_file = qmenu.addMenu( "File" )
+        action_file_location = menu_file.addAction( "Open Location" )
+        action_file_copy = menu_file.addAction( "Copy Path" )
+        action_file_data = menu_file.addAction( "Copy Image" )
+        # File Animation
+        menu_anim = qmenu.addMenu( "Animation" )
+        action_anim_export_one = menu_anim.addAction( "Export One" )
+        action_anim_export_all = menu_anim.addAction( "Export All" )
+        # File Compact
+        menu_comp = qmenu.addMenu( "Compressed" )
+        action_comp_export_one = menu_comp.addAction( "Export One" )
+        action_comp_export_all = menu_comp.addAction( "Export All" )
+        # Color
+        menu_color = qmenu.addMenu( "Color" )
+        action_color_analyse = menu_color.addAction( "Color Analyse" + string_clip )
+        action_color_lut = menu_color.addAction( "LUT to Image" )
+        
+        # Edit
+        menu_edit = qmenu.addMenu( "Edit" )
+        action_edit_greyscale = menu_edit.addAction( "View Greyscale" )
+        action_edit_invert_x = menu_edit.addAction( "Flip Horizontal" )
+        action_edit_invert_y = menu_edit.addAction( "Flip Vertical" )
+        action_edit_reset = menu_edit.addAction( "Edit Reset" )
+        # Insert
+        menu_insert = qmenu.addMenu( "Insert" )
+        action_insert_document = menu_insert.addAction( "Document" + string_clip )
+        action_insert_layer = menu_insert.addAction( "Layer" + string_clip )
+        action_insert_reference = menu_insert.addAction( "Reference" + string_clip )
+        # Screen
+        qmenu.addSeparator()
+        action_full_screen = qmenu.addAction( "Full Screen" )
+
+        #endregion
+        #region State
+
+        # Check Preview
+        action_preview_original.setCheckable( True );       action_preview_original.setChecked( self.state_original )
+        action_clip_image.setCheckable( True );             action_clip_image.setChecked( self.state_clip )
+        # Check Edit
+        action_edit_greyscale.setCheckable( True );         action_edit_greyscale.setChecked( self.edit_greyscale )
+        action_edit_invert_x.setCheckable( True );          action_edit_invert_x.setChecked( self.edit_invert_x )
+        action_edit_invert_y.setCheckable( True );          action_edit_invert_y.setChecked( self.edit_invert_y )
+        # Check Full Screen
+        action_full_screen.setCheckable( True );            action_full_screen.setChecked( self.state_maximized )
+
+        # Disable Menu
+        if ppp == True:
+            menu_preview.setEnabled( False )
+            menu_overlay.setEnabled( False )
+            menu_file.setEnabled( False )
+            menu_edit.setEnabled( False )
+            menu_insert.setEnabled( False )
+        if ppp == True or self.preview_state != "ANIM":
+            menu_anim.setEnabled( False )
+        if ppp == True or self.preview_state != "COMP":
+            menu_comp.setEnabled( False )
+        # Disable Actions
+        if self.preview_qpixmap == None:
+            action_pin_reference.setEnabled( False )
+        if check_vector == True:
+            action_clip_image.setEnabled( False )
+        if self.pigmento_picker == None: 
+            action_color_analyse.setEnabled( False )
+        if self.pigmento_sampler == None: 
+            action_color_lut.setEnabled( False )
+        if check_insert == False:
+            action_insert_layer.setEnabled( False )
+            action_insert_reference.setEnabled( False )
+
+        #endregion
+        #region Action
+
+        # Mapping
+        action = qmenu.exec_( self.mapToGlobal( event.pos() ) )
+        # General
+        if action == action_pin_reference:
+            self.PREVIEW_PIN_INSERT.emit( "image", self.w2, self.h2, None, self.preview_url, clip )
+        if action == action_clip_image:
+            self.state_clip = not self.state_clip
+            if self.state_clip == True:
+                self.Camera_Reset()
+        # Preview
+        if action == action_preview_original:
+            self.state_original = not self.state_original
+        if action == action_preview_random:
+            self.PREVIEW_RANDOM.emit()
+        # File
+        if action == action_file_location:
+            File_Open_Location( self.preview_url )
+        if action == action_file_copy:
+            File_Copy_Path( self.preview_url )
+        if action == action_file_data:
+            File_Copy_Image( self.preview_url )
+        # Animation
+        if action == action_anim_export_one:
+            self.Anim_Export_One()
+        if action == action_anim_export_all:
+            self.Anim_Export_All()
+        # Compressed
+        if action == action_comp_export_one:
+            self.Comp_Export_One()
+        if action == action_comp_export_all:
+            self.Comp_Export_All()
+        # Color
+        if action == action_color_analyse:
+            qimage = qpixmap.toImage()
+            Color_Analyse( self.pigmento_picker, qimage )
+        if action == action_color_lut:
+            Color_LUT_to_Image( self.pigmento_sampler, [ self.preview_url ] )
+        # Edit
+        if action == action_edit_greyscale:
+            self.Edit_Display( "egs" )
+        if action == action_edit_invert_x:
+            self.Edit_Display( "efx" )
+        if action == action_edit_invert_y:
+            self.Edit_Display( "efy" )
+        if action == action_edit_reset:
+            self.Edit_Display( None )
+        # Insert
+        if action == action_insert_document:
+            Insert_Document( self, self.preview_url, clip )
+        if action == action_insert_layer:
+            Insert_Layer( self, self.preview_url, clip )
+        if action == action_insert_reference:
+            Insert_Reference( self, self.preview_url, clip )
+        # Screen
+        if action == action_full_screen:
+            self.PREVIEW_FULL_SCREEN.emit( not self.state_maximized )
+
+        #endregion
     # Clip
     def Clip_Reset( self ):
         self.state_clip = False
-        self.cl = 0.1
-        self.ct = 0.1
-        self.cr = 0.9
-        self.cb = 0.9
-        self.cw = self.cr - self.cl
-        self.ch = self.cb - self.ct
+        self.clip_node = None
+        self.clip_l = 0.1  # 0-1
+        self.clip_t = 0.1  # 0-1
+        self.clip_r = 0.9  # 0-1
+        self.clip_b = 0.9  # 0-1
     def Clip_Node( self, ex, ey ):
-        # Nodes
-        n1 = [ self.bl + self.bw * self.cl, self.bt + self.bh * self.ct ]
-        n2 = [ self.bl + self.bw * self.cr, self.bt + self.bh * self.ct ]
-        n3 = [ self.bl + self.bw * self.cl, self.bt + self.bh * self.cb ]
-        n4 = [ self.bl + self.bw * self.cr, self.bt + self.bh * self.cb ]
-
+        # Camera
+        self.Camera_Reset()
+        # Points Single
+        pl = self.draw_px + self.draw_width * self.clip_l
+        pr = self.draw_px + self.draw_width * self.clip_r
+        pt = self.draw_py + self.draw_height * self.clip_t
+        pb = self.draw_py + self.draw_height * self.clip_b
+        # Point Pair
+        n1 = [ int( pl ), int( pt ) ]
+        n2 = [ int( pr ), int( pt ) ]
+        n3 = [ int( pr ), int( pb ) ]
+        n4 = [ int( pl ), int( pb ) ]
         # Distance
         d1 = Trig_2D_Points_Distance( ex, ey, n1[0], n1[1] )
         d2 = Trig_2D_Points_Distance( ex, ey, n2[0], n2[1] )
@@ -765,425 +1359,369 @@ class ImagineBoard_Preview( QWidget ):
         dist = [ [ d1, 1 ], [ d2, 2 ], [ d3, 3 ], [ d4, 4 ] ]
         dist.sort()
         factor = 20
+        self.clip_node = None
         if dist[0][0] <= factor:
             self.clip_node = dist[0][1]
-        else:
-            self.clip_node = None
     def Clip_Edit( self, ex, ey, node ):
         if node != None:
-            lx = ( Limit_Range( ex, self.bl, self.br ) - self.bl ) / self.bw
-            ly = ( Limit_Range( ey, self.bt, self.bb ) - self.bt ) / self.bh
+            # Limit Value
+            lx = ( Limit_Range( ex, self.draw_px, self.draw_px + self.draw_width ) - self.draw_px ) / self.draw_width
+            ly = ( Limit_Range( ey, self.draw_py, self.draw_py + self.draw_height ) - self.draw_py ) / self.draw_height
+            # Nodes
             if node == 1:
-                if lx != self.cr:self.cl = lx
-                if ly != self.cb:self.ct = ly
+                if lx != self.clip_r:   self.clip_l = lx
+                if ly != self.clip_b:   self.clip_t = ly
             if node == 2:
-                if lx != self.cl:self.cr = lx
-                if ly != self.cb:self.ct = ly
+                if lx != self.clip_l:   self.clip_r = lx
+                if ly != self.clip_b:   self.clip_t = ly
             if node == 3:
-                if lx != self.cr:self.cl = lx
-                if ly != self.ct:self.cb = ly
+                if lx != self.clip_l:   self.clip_r = lx
+                if ly != self.clip_t:   self.clip_b = ly
             if node == 4:
-                if lx != self.cl:self.cr = lx
-                if ly != self.ct:self.cb = ly
+                if lx != self.clip_r:   self.clip_l = lx
+                if ly != self.clip_t:   self.clip_b = ly
     def Clip_Flip( self ):
-        if self.cr < self.cl:
-            self.cl, self.cr = self.cr, self.cl
-        if self.cb < self.ct:
-            self.ct, self.cb = self.cb, self.ct
-        self.cw = self.cr - self.cl
-        self.ch = self.cb - self.ct
-
-    # Information
-    def Check_Vector( self, path ):
-        self.state_vector = os.path.splitext( path )[1] in [ ".svg", ".svgz" ]
-    def Information_Display( self ):
+        if self.clip_r < self.clip_l:
+            self.clip_l, self.clip_r = self.clip_r, self.clip_l
+        if self.clip_b < self.clip_t:
+            self.clip_t, self.clip_b = self.clip_b, self.clip_t
+    def Clip_Crop( self, qpixmap ):
+        if self.state_clip == True:
+            # Dimensions
+            width = self.preview_qpixmap.width()
+            height = self.preview_qpixmap.height()
+            # Clip Flipping
+            clip_l = self.clip_l
+            clip_r = self.clip_r
+            clip_t = self.clip_t
+            clip_b = self.clip_b
+            # Variables
+            delta_w = abs( clip_r - clip_l )
+            delta_h = abs( clip_b - clip_t )
+            # Crop
+            qpixmap = qpixmap.copy( int( width * clip_l ), int( height * clip_t ), int( width * delta_w ), int( height * delta_h ) )
+        return qpixmap
+    def Clip_Image( self ):
+        self.clip_w = self.clip_r - self.clip_l
+        self.clip_h = self.clip_b - self.clip_t
+        self.clip_image = { 
+            "cstate" : self.state_clip,
+            "cl": self.clip_l,
+            "ct": self.clip_t,
+            "cw": self.clip_w,
+            "ch": self.clip_h,
+            }
+    # Overlay
+    def Overlay_Information( self ):
         # Variables
-        path = self.preview_path
-        # Logic
-        if path == None:
-            text = "None"
-        else:
-            # String
-            text = ""
-
+        text = ""
+        url = self.preview_url
+        # Checks
+        if url != None:
+            # Checks
+            check_dir = os.path.isdir( url )
+            check_file = os.path.isfile( url )
+            dirname = os.path.dirname( url )
+            basename = os.path.basename( url )
             # Paths
             try:
-                info_path = os.path.split( path )
-                info_dir = info_path[0]
-                basename = os.path.splitext( info_path[1] )
-                info_name = basename[0]
-                info_type = basename[1].replace( ".", "" )
-                text += f"Directory : { info_dir }\n"
-                text += f"Name : { info_name } [ { info_type.upper() } ]\n"
-            except:
-                pass
-
+                if check_dir:
+                    text += f"Directory : { dirname }"
+                    text += f"\nName : { basename }"
+                if check_file:
+                    split = basename.split(".")
+                    info_name = split[0]
+                    info_ext = split[1].upper()
+                    text += f"Directory : { dirname }"
+                    text += f"\nName : { info_name } [ { info_ext } ]"
+            except:pass
             # Time
             try:
-                mod_time = os.path.getmtime( path )
+                mod_time = os.path.getmtime( url )
                 local_time = time.localtime( mod_time )
                 info_time = time.strftime( f"%Y-%m[%b]-%d[%a] %H:%M:%S", local_time )
-                text += f"Time : { info_time }\n"
-            except:
-                pass
-
+                text += f"\nTime : { info_time }"
+            except:pass
             # Size
             try:
-                b = os.path.getsize( path )
-                kb = b / 1000
-                mb = kb / 1000
-                if kb >= 1 and kb < 1000:
-                    info_size = kb
-                    info_scale = "Kb"
-                elif mb >= 1 and mb < 1000:
-                    info_size = mb
-                    info_scale = "Mb"
-                else:
-                    info_size = b
-                    info_scale = "b"
-                text += f"Size : { round( info_size, 3 ) } { info_scale }\n"
-            except:
-                pass
-
+                if check_file:
+                    b = os.path.getsize( url )
+                    kb = b / 1000
+                    mb = kb / 1000
+                    if 1 <= kb < 1000:
+                        info_size = kb
+                        info_scale = "Kb"
+                    elif 1 <= mb < 1000:
+                        info_size = mb
+                        info_scale = "Mb"
+                    else:
+                        info_size = b
+                        info_scale = "b"
+                    text += f"\nSize : { round( info_size, 3 ) } { info_scale }"
+            except:pass
+            # Type
+            try:
+                if check_file:
+                    pf = self.preview_format
+                    pif = self.preview_image_format
+                    pn = self.preview_color_name
+                    text += f"\nType : { pf } { pif } { pn }"
+            except:pass
             # Dimensions
             try:
-                info_width = self.preview_qpixmap.width()
-                info_height = self.preview_qpixmap.height()
-                text += f"Dimension : { info_width } x { info_height } px"
-            except:
-                pass
+                if check_file:
+                    info_width = self.preview_qpixmap.width()
+                    info_height = self.preview_qpixmap.height()
+                    info_dpr = self.preview_qpixmap.devicePixelRatio()
+                    text += f"\nDimension : { info_width } x { info_height } px  { info_dpr } dpr"
+            except:pass
+            # Preview Control
+            try:
+                if self.preview_state == "ANIM" and self.anim_count > 0:
+                    text += f"\nAnimation : { self.anim_frame }:{ self.anim_count }"
+                if self.preview_state == "COMP" and self.comp_count > 0:
+                    text += f"\nCompressed : { self.comp_index }:{ self.comp_count } : { self.comp_path[self.comp_index] }"
+            except:pass
+            # Meta Data
+            try:
+                text += "\n"
+                for md in self.preview_text:
+                    text += f"\n{ md[0] } : { md[1] }"
+            except:pass
+        else:
+            pass
         # Return
         return text
+    def Overlay_Slide( self, ex, ey ):
+        lim = self.hh - self.info_edge
+        mid = int( self.hh - self.info_edge * 0.5 )
+        if lim <= self.oy <= self.hh:
+            if ey < lim:        self.state_information = True
+            elif ey > self.hh:  self.state_information = False
 
+    # Animation
+    def Anim_Export_One( self ):
+        if self.preview_state == "ANIM":
+            save_folder = self.Export_Directory()
+            if save_folder not in invalid:
+                self.Export_Image( save_folder, self.anim_sequence, self.anim_frame )
+    def Anim_Export_All( self ):
+        if self.preview_state == "ANIM":
+            save_folder = self.Export_Directory()
+            if save_folder not in invalid:
+                # Variables
+                count = len( self.anim_sequence )
+                # Progress Bar
+                self.PREVIEW_PB_VALUE.emit( 0 )
+                self.PREVIEW_PB_MAX.emit( count )
+                # Cycle
+                for i in range( 0, count ):
+                    self.PREVIEW_PB_VALUE.emit( i + 1 )
+                    self.Export_Image( save_folder, self.anim_sequence, i )
+                # Progress Bar
+                self.PREVIEW_PB_VALUE.emit( 0 )
+                self.PREVIEW_PB_MAX.emit( 1 )
+    # Compressed
+    def Comp_Export_One( self ):
+        if self.preview_state == "COMP":
+            save_folder = self.Export_Directory()
+            if save_folder not in invalid:
+                self.Export_Archive( save_folder, self.comp_archive, self.comp_path[self.comp_index] )
+    def Comp_Export_All( self ):
+        if self.preview_state == "COMP":
+            save_folder = self.Export_Directory()
+            if save_folder not in invalid:
+                # Variables
+                count = len( self.comp_path )
+                # Progress Bar
+                self.PREVIEW_PB_VALUE.emit( 0 )
+                self.PREVIEW_PB_MAX.emit( count )
+                # Cycle
+                for i in range( 0, count ):
+                    self.PREVIEW_PB_VALUE.emit( i + 1 )
+                    self.Export_Archive( save_folder, self.comp_archive, self.comp_path[i] )
+                # Progress Bar
+                self.PREVIEW_PB_VALUE.emit( 0 )
+                self.PREVIEW_PB_MAX.emit( 1 )
+    # Export
+    def Export_Directory( self ):
+        file_dialog = QFileDialog( QWidget( self ) )
+        file_dialog.setFileMode( QFileDialog.DirectoryOnly )
+        save_folder = file_dialog.getExistingDirectory( self, "Select Directory", self.preview_url )
+        return save_folder
+    def Export_Image( self, directory, lista, index ):
+        # Variables
+        basename = os.path.basename( self.preview_url )
+        name = basename.split( "." )[0]
+        name_new = f"{ name }_{ str( index ).zfill( 4 ) }.png"
+        save_path = os.path.normpath( os.path.join( directory, name_new ) )
+        exists = os.path.exists( save_path )
+        if exists == False:
+            qpixmap = lista[ index ]
+            if qpixmap.isNull() == False:
+                qpixmap.save( save_path )
+                Message_Log( "EXPORT", save_path )
+            del qpixmap
+    def Export_Archive( self, directory, archive, name ):
+        # Image
+        qpixmap = Compressed_QPixmap( archive, name )
+        # Archive
+        archive_name = os.path.basename( self.preview_url )
+        archive_name = archive_name.split( "." )[0]
+        archive_name = archive_name.replace( " ", "_" )
+        # File
+        file_name = os.path.basename( name )
+        file_name = file_name.split( "." )[0]
+        file_name = file_name.replace( " ", "_" )
+        # Path
+        name_new = f"{ archive_name }_{ file_name }.png"
+        save_path = os.path.normpath( os.path.join( directory, name_new ) )
+        # Save
+        check_exists = os.path.exists( save_path ) == False
+        check_null = qpixmap.isNull() == False
+        check_none = qpixmap != None
+        if check_exists and check_null and check_none:
+            qpixmap.save( save_path )
+            Message_Log( "EXPORT", save_path )
+        del qpixmap
     # Edit
     def Edit_Reset( self ):
         self.edit_greyscale = False
-        self.edit_invert_h = False
-        self.edit_invert_v = False
+        self.edit_invert_x = False
+        self.edit_invert_y = False
     def Edit_Display( self, operation ):
         # Operations Boolean Toggle
         if operation == "egs":
             self.edit_greyscale = not self.edit_greyscale
         if operation == "efx":
-            self.edit_invert_h = not self.edit_invert_h
+            self.edit_invert_x = not self.edit_invert_x
         if operation == "efy":
-            self.edit_invert_v = not self.edit_invert_v
+            self.edit_invert_y = not self.edit_invert_y
         if operation == None:
             self.Edit_Reset()
 
         # Read
-        if ( self.state_animation == False and self.state_compact == False ):
-            qimage = QImage( self.preview_path )
-        elif self.state_animation == True:
+        if self.preview_state not in [ "ANIM", "COMP" ]:
+            reader = QImageReader( self.preview_url )
+            reader.setAutoTransform( True )
+            qimage = reader.read()
+        elif self.preview_state == "ANIM":
             qpixmap = self.anim_sequence[self.anim_frame]
             qimage = qpixmap.toImage()
-        elif self.state_compact == True:
-            qpixmap = self.Comp_Read( self.comp_archive, self.comp_path[self.comp_index] )
+        elif self.preview_state == "COMP":
+            qpixmap = Compressed_QPixmap( self.comp_archive, self.comp_path[self.comp_index] )
             qimage = qpixmap.toImage()
 
         # Edit Image
         if self.edit_greyscale == True:
             qimage = qimage.convertToFormat( 24 )
-        if ( self.edit_invert_h == True or self.edit_invert_v == True ):
-            qimage = qimage.mirrored( self.edit_invert_h, self.edit_invert_v )
+        if ( self.edit_invert_x == True or self.edit_invert_y == True ):
+            qimage = qimage.mirrored( self.edit_invert_x, self.edit_invert_y )
         self.preview_qpixmap = QPixmap().fromImage( qimage )
         # Update
         self.update()
-
-    # Context Menu
-    def Context_Menu( self, event ):
-        #region Variables
-
-        self.state_press = False
-        state_null = self.preview_qpixmap == None
-        state_insert = Insert_Check( self )
-        state_animation = self.state_animation
-        state_compact = self.state_compact
-        state_vector = self.state_vector
-        path_none = self.preview_path == None
-
-        # Strings
-        string_pickcolor = "Picker"
-        if self.pigment_o == None:
-            string_pickcolor += " [RGB]"
-        string_clip = ""
-        if self.state_clip == True:
-            string_clip = " (Clip)"
-
-        # Clip
-        clip = { 
-            "cstate" : self.state_clip,
-            "cl": self.cl,
-            "ct": self.ct,
-            "cw": self.cw,
-            "ch": self.ch,
-            }
-
-        # Cursor
-        Cursor_Icon( self )
-
-        #endregion
-        #region Menu
-
-        # Menu
-        qmenu = QMenu( self )
-
-        # General
-        action_function = qmenu.addAction( "Function >> " + self.function_operation )
-        action_pin = qmenu.addAction( "Pin Reference" + string_clip )
-        action_random = qmenu.addAction( "Random Index" )
-        action_clip = qmenu.addAction( "Clip Image" )
-        action_full_screen = qmenu.addAction( "Full Screen" )
-        qmenu.addSeparator()
-        # File
-        menu_file = qmenu.addMenu( "File" )
-        action_file_location = menu_file.addAction( "File Location" )
-        action_file_copy = menu_file.addAction( "Copy Path" )
-        action_file_information = menu_file.addAction( "Information" )
-        # Animation
-        menu_anim = qmenu.addMenu( "Animation" )
-        action_anim_export_one = menu_anim.addAction( "Export One Frame" )
-        action_anim_export_all = menu_anim.addAction( "Export All Frames" )
-        # Compact
-        menu_comp = qmenu.addMenu( "Compressed" )
-        action_comp_export_one = menu_comp.addAction( "Export One" )
-        # Edit
-        menu_edit = qmenu.addMenu( "Edit" )
-        action_edit_greyscale = menu_edit.addAction( "View Greyscale" )
-        action_edit_invert_h = menu_edit.addAction( "Flip Horizontal" )
-        action_edit_invert_v = menu_edit.addAction( "Flip Vertical" )
-        action_edit_reset = menu_edit.addAction( "Reset" )
-        # Color
-        menu_color = qmenu.addMenu( "Color" )
-        action_pick_color = menu_color.addAction( string_pickcolor )
-        action_analyse = menu_color.addAction( "Analyse" + string_clip )
-        # Insert
-        menu_insert = qmenu.addMenu( "Insert" )
-        action_document = menu_insert.addAction( "Document" + string_clip )
-        action_insert_layer = menu_insert.addAction( "Layer" + string_clip )
-        action_insert_ref = menu_insert.addAction( "Reference" + string_clip )
-
-        # Check Clip
-        action_clip.setCheckable( True )
-        action_clip.setChecked( self.state_clip )
-        # Check Full Screen
-        action_full_screen.setCheckable( True )
-        action_full_screen.setChecked( self.state_maximized )
-        # Check Information
-        action_file_information.setCheckable( True )
-        action_file_information.setChecked( self.state_information )
-        # Check Edit
-        action_edit_greyscale.setCheckable( True )
-        action_edit_greyscale.setChecked( self.edit_greyscale )
-        action_edit_invert_h.setCheckable( True )
-        action_edit_invert_h.setChecked( self.edit_invert_h )
-        action_edit_invert_v.setCheckable( True )
-        action_edit_invert_v.setChecked( self.edit_invert_v )
-        # Check Color
-        action_pick_color.setCheckable( True )
-        action_pick_color.setChecked( self.state_pickcolor )
-
-        # Disable General
-        if state_null == True:
-            action_function.setEnabled( False )
-            action_pin.setEnabled( False )
-            action_random.setEnabled( False )
-        # Disable Clip
-        if state_null == True or state_vector == True or path_none == True:
-            action_clip.setEnabled( False )
-        # Disable File
-        if state_null == True or path_none == True:
-            menu_file.setEnabled( False )
-        # Disable Animation
-        if state_null == True or state_animation == False or path_none == True:
-            menu_anim.setEnabled( False )
-        # Disable Compact
-        if state_null == True or state_compact == False or path_none == True:
-            menu_comp.setEnabled( False )
-        # Disable Edit
-        if state_null == True or state_animation == True or path_none == True:
-            menu_edit.setEnabled( False )
-        # Disable Color
-        if state_null == True:
-            menu_color.setEnabled( False )
-        if state_null == True or self.pigment_o == None:
-            action_analyse.setEnabled( False )
-        # Disable Insert
-        if state_null == True or path_none == True or state_compact == True:
-            menu_insert.setEnabled( False )
-        if state_insert == False:
-            action_insert_layer.setEnabled( False )
-            action_insert_ref.setEnabled( False )
-
-        #endregion
-        #region Action
-
-        # Mapping
-        action = qmenu.exec_( self.mapToGlobal( event.pos() ) )
-
-        # General
-        if action == action_function:
-            self.SIGNAL_FUNCTION.emit( [ self.preview_path ] )
-        if action == action_pin:
-            pin = {
-                "bx" : self.w2,
-                "by" : self.h2,
-                "image_path" : self.preview_path,
-                }
-            self.SIGNAL_PIN_IMAGE.emit( pin, clip )
-        if action == action_random:
-            self.SIGNAL_RANDOM.emit()
-        if action == action_clip:
-            self.state_clip = not self.state_clip
-        if action == action_full_screen:
-            self.SIGNAL_FULL_SCREEN.emit( not self.state_maximized )
-
-        # File
-        if action == action_file_location:
-            self.SIGNAL_LOCATION.emit( self.preview_path )
-        if action == action_file_copy:
-            Path_Copy( self, self.preview_path )
-        if action == action_file_information:
-            self.state_information = not self.state_information
-
-        # Animation
-        if action == action_anim_export_one:
-            self.Anim_Export_Index( self.anim_frame )
-        if action == action_anim_export_all:
-            self.Anim_Export_Cycle()
-
-        # Compressed
-        if action == action_comp_export_one:
-            self.Comp_Export_Index( self.comp_index )
-
-        # Edit
-        if action == action_edit_greyscale:
-            self.Edit_Display( "egs" )
-        if action == action_edit_invert_h:
-            self.Edit_Display( "efx" )
-        if action == action_edit_invert_v:
-            self.Edit_Display( "efy" )
-        if action == action_edit_reset:
-            self.Edit_Display( None )
-
-        # Color
-        if action == action_pick_color:
-            self.state_pickcolor = not self.state_pickcolor
-        if action == action_analyse:
-            qpixmap = self.Draw_Clip( self.preview_qpixmap )
-            qimage = qpixmap.toImage()
-            self.SIGNAL_ANALYSE.emit( qimage )
-
-        # Insert
-        if action == action_document:
-            self.SIGNAL_NEW_DOCUMENT.emit( self.preview_path, clip )
-        if action == action_insert_layer:
-            self.SIGNAL_INSERT_LAYER.emit( self.preview_path, clip )
-        if action == action_insert_ref:
-            self.SIGNAL_INSERT_REFERENCE.emit( self.preview_path, clip )
-
-        #endregion
 
     # Mouse Events
     def mousePressEvent( self, event ):
         # Variable
         self.state_press = True
-
         # Event
+        em = event.modifiers()
+        eb = event.buttons()
         ex = event.x()
         ey = event.y()
         self.ox = ex
         self.oy = ey
         self.ex = ex
         self.ey = ey
-
         # Cursor
-        Cursor_Icon( self )
-
+        Icon_Cursor( self.state_pickcolor, self.state_press )
         # LMB
-        if ( event.modifiers() == QtCore.Qt.NoModifier and event.buttons() == QtCore.Qt.LeftButton ):
-            if self.state_pickcolor == True:
+        if em == QtCore.Qt.NoModifier and eb == QtCore.Qt.LeftButton:
+            if ( self.state_pickcolor == True and self.anim_play == False ):
                 self.operation = "color_picker"
-                ColorPicker_Event( self, self.ex, self.ey, self.qimage_grab, True )
+                ColorPicker_Event( self, ex, ey, self.qimage_grab, True )
             elif self.state_clip == True:
                 self.operation = "clip"
                 self.Clip_Node( ex, ey )
             else:
-                self.operation = None
-        if ( event.modifiers() == QtCore.Qt.ShiftModifier and event.buttons() == QtCore.Qt.LeftButton ):
+                self.operation = "information"
+        if em == QtCore.Qt.ShiftModifier and eb == QtCore.Qt.LeftButton:
             self.operation = "camera_move"
             self.Camera_Previous()
-        if ( event.modifiers() == QtCore.Qt.ControlModifier and event.buttons() == QtCore.Qt.LeftButton ):
+        if em == QtCore.Qt.ControlModifier and eb == QtCore.Qt.LeftButton:
             self.operation = "pagination"
             self.Camera_Reset()
-        if ( event.modifiers() == QtCore.Qt.AltModifier and event.buttons() == QtCore.Qt.LeftButton ):
+        if em == QtCore.Qt.AltModifier and eb == QtCore.Qt.LeftButton:
             self.operation = "drag_drop"
-
+            self.Clip_Image()
         # MMB
-        if ( event.modifiers() == QtCore.Qt.NoModifier and event.buttons() == QtCore.Qt.MiddleButton ):
+        if em == QtCore.Qt.NoModifier and eb == QtCore.Qt.MiddleButton:
             self.operation = "camera_move"
             self.Camera_Previous()
-
         # RMB
-        if ( event.modifiers() == QtCore.Qt.NoModifier and event.buttons() == QtCore.Qt.RightButton ):
+        if em == QtCore.Qt.NoModifier and eb == QtCore.Qt.RightButton:
             self.operation = None
             self.Context_Menu( event )
-        if ( event.modifiers() == QtCore.Qt.ShiftModifier and event.buttons() == QtCore.Qt.RightButton ):
-            self.operation = "camera_scale"
+        if em == QtCore.Qt.ShiftModifier and eb == QtCore.Qt.RightButton:
+            self.operation = "camera_swap"
             self.Camera_Previous()
-        if ( event.modifiers() == QtCore.Qt.ControlModifier and event.buttons() == QtCore.Qt.RightButton ):
-            self.operation = "pagination"
-            self.Camera_Reset()
-        if ( event.modifiers() == QtCore.Qt.AltModifier and event.buttons() == QtCore.Qt.RightButton ):
-            self.operation = "drag_drop"
-
         # Update
         self.update()
     def mouseMoveEvent( self, event ):
         # Variable
         self.state_press = True
-
         # Event
         ex = event.x()
         ey = event.y()
         self.ex = ex
         self.ey = ey
-
         # Neutral
-        if ( self.operation == "color_picker" and self.anim_timer.isActive() == False ):
-            ColorPicker_Event( self, self.ex, self.ey, self.qimage_grab, True )
+        if self.operation == "information":
+            self.Overlay_Slide( ex, ey )
+        if ( self.operation == "color_picker" and self.anim_play == False ):
+            ColorPicker_Event( self, ex, ey, self.qimage_grab, True )
         if self.operation == "clip":
             self.Clip_Edit( ex, ey, self.clip_node )
         # Camera
         if self.operation == "camera_move":
             self.Camera_Move( ex, ey )
+        if self.operation == "camera_swap":
+            self.Camera_Swap( ex, ey )
         if self.operation == "camera_scale":
             self.Camera_Scale( ex, ey )
+        if self.operation == "camera_rotation":
+            self.Camera_Rotation( ex, ey )
         # Pagination
         if self.operation == "pagination":
             self.Pagination_Stylus( ex, ey )
         # Drag Drop
         if self.operation == "drag_drop":
-            clip = { 
-                "cstate" : self.state_clip,
-                "cl": self.cl,
-                "ct": self.ct,
-                "cw": self.cw,
-                "ch": self.ch,
-                }
-            Insert_Drag( self, self.preview_path, clip )
-
+            Insert_Drag( self, self.preview_url, self.clip_image, False )
         # Update
         self.update()
     def mouseDoubleClickEvent( self, event ):
-        self.SIGNAL_MODE.emit( 1 )
+        # Variables
+        url = self.preview_url
+        # Event
+        em = event.modifiers()
+        eb = event.buttons()
+        # LMB
+        if ( em == QtCore.Qt.NoModifier and eb == QtCore.Qt.LeftButton ):
+            self.PREVIEW_MODE.emit( 1, False )
+        if ( em == QtCore.Qt.ShiftModifier and eb == QtCore.Qt.LeftButton ):
+            if os.path.isdir( url ):
+                self.PREVIEW_LOAD.emit( url, None, 0 )
+        # RMB
+        if ( em == QtCore.Qt.ShiftModifier and eb == QtCore.Qt.RightButton ):
+            self.PREVIEW_PARENT.emit()
     def mouseReleaseEvent( self, event ):
         # Variables
         self.state_press = False
-        # Function
+        # Cursor
         self.Clip_Flip()
-        Cursor_Icon( self )
-        if self.operation == "color_picker":
+        Icon_Cursor( self.state_pickcolor, self.state_press )
+        if ( self.operation == "color_picker" and self.anim_play == False ):
             ColorPicker_Event( self, self.ex, self.ey, self.qimage_grab, False )
         # Variables
         self.operation = None
@@ -1196,38 +1734,42 @@ class ImagineBoard_Preview( QWidget ):
     def wheelEvent( self, event ):
         delta_y = event.angleDelta().y()
         angle = 5
-        if delta_y >= angle:
-            self.SIGNAL_INCREMENT.emit( +1 )
-        if delta_y <= -angle:
-            self.SIGNAL_INCREMENT.emit( -1 )
+        if delta_y >= angle:    self.PREVIEW_INCREMENT.emit( -1 )
+        if delta_y <= -angle:   self.PREVIEW_INCREMENT.emit( +1 )
     # Drag and Drop Event
     def dragEnterEvent( self, event ):
-        if event.mimeData().hasImage:
+        mime_data, format_id = Insert_Drop( self, event )
+        if len( mime_data ) > 0 or format_id == drag_id:
+            self.state_press = False
             self.drop = True
             event.accept()
         else:
             event.ignore()
         self.update()
     def dragMoveEvent( self, event ):
-        if event.mimeData().hasImage:
+        mime_data, format_id = Insert_Drop( self, event )
+        if len( mime_data ) > 0 or format_id == drag_id:
+            self.state_press = False
             self.drop = True
             event.accept()
         else:
             event.ignore()
         self.update()
     def dragLeaveEvent( self, event ):
+        self.state_press = False
         self.drop = False
         event.accept()
         self.update()
     def dropEvent( self, event ):
-        if event.mimeData().hasImage:
+        mime_data, format_id = Insert_Drop( self, event )
+        if len( mime_data ) > 0 or format_id == drag_id:
             if ( self.drop == True and self.drag == False ):
                 event.setDropAction( Qt.CopyAction )
-                mime_data = Drop_Inside( self, event, False )
-                self.SIGNAL_DROP.emit( mime_data )
+                self.PREVIEW_DROP.emit( mime_data )
             event.accept()
         else:
             event.ignore()
+        self.state_press = False
         self.drop = False
         self.drag = False
         self.update()
@@ -1243,141 +1785,271 @@ class ImagineBoard_Preview( QWidget ):
         hh = self.hh
         w2 = self.w2
         h2 = self.h2
-        if ww < hh:
-            side = ww
-        else:
-            side = hh
+        side = min( ww, hh )
 
         # Painter
         painter = QPainter( self )
         painter.setRenderHint( QtGui.QPainter.Antialiasing, True )
 
-        # Background Hover
-        painter.setPen( QtCore.Qt.NoPen )
-        painter.setBrush( QBrush( self.color_alpha ) )
-        painter.drawRect( 0, 0, ww, hh )
-
         # Mask
         painter.setClipRect( QRect( int( 0 ), int( 0 ), int( ww ), int( hh ) ), Qt.ReplaceClip )
 
-        # Render Image
+        # Path
+        url = self.preview_url
         qpixmap = self.preview_qpixmap
-        render = True
-        if qpixmap in [ None, False, True ]:
-            render = False
-        if render == True:
-            # Draw Pixmap
-            draw = self.Draw_Render( qpixmap )
-            painter.drawPixmap( int( self.bl ), int( self.bt ), draw )
-
-            # Clip Area
-            if self.state_clip == True:
-                # Painter
-                painter.setPen( QtCore.Qt.NoPen )
-                painter.setBrush( QBrush( self.color_clip ) )
-                # Path
-                area = QPainterPath()
-                area.moveTo( self.bl + 0,                 self.bt + 0 )
-                area.lineTo( self.bl + self.bw,           self.bt + 0 )
-                area.lineTo( self.bl + self.bw,           self.bt + self.bh )
-                area.lineTo( self.bl + 0,                 self.bt + self.bh )
-                area.moveTo( self.bl + self.bw * self.cl, self.bt + self.bh * self.ct )
-                area.lineTo( self.bl + self.bw * self.cr, self.bt + self.bh * self.ct )
-                area.lineTo( self.bl + self.bw * self.cr, self.bt + self.bh * self.cb )
-                area.lineTo( self.bl + self.bw * self.cl, self.bt + self.bh * self.cb )
-                painter.drawPath( area )
-                # Points
-                painter.setPen( QPen( self.color_2, 2, Qt.SolidLine ) )
-                painter.setBrush( QBrush( self.color_1, Qt.SolidPattern ) )
-                tri = 15
-                poly1 = QPolygon( [
-                    QPoint( int( self.bl + self.bw * self.cl ),       int( self.bt + self.bh * self.ct ) ),
-                    QPoint( int( self.bl + self.bw * self.cl + tri ), int( self.bt + self.bh * self.ct ) ),
-                    QPoint( int( self.bl + self.bw * self.cl ),       int( self.bt + self.bh * self.ct + tri ) ),
-                    ] )
-                poly2 = QPolygon( [
-                    QPoint( int( self.bl + self.bw * self.cr ),       int( self.bt + self.bh * self.ct ) ),
-                    QPoint( int( self.bl + self.bw * self.cr ),       int( self.bt + self.bh * self.ct + tri ) ),
-                    QPoint( int( self.bl + self.bw * self.cr - tri ), int( self.bt + self.bh * self.ct ) ),
-                    ] )
-                poly3 = QPolygon( [
-                    QPoint( int( self.bl + self.bw * self.cr ),       int( self.bt + self.bh * self.cb ) ),
-                    QPoint( int( self.bl + self.bw * self.cr - tri ), int( self.bt + self.bh * self.cb ) ),
-                    QPoint( int( self.bl + self.bw * self.cr ),       int( self.bt + self.bh * self.cb - tri ) ),
-                    ] )
-                poly4 = QPolygon( [
-                    QPoint( int( self.bl + self.bw * self.cl ),       int( self.bt + self.bh * self.cb ) ),
-                    QPoint( int( self.bl + self.bw * self.cl ),       int( self.bt + self.bh * self.cb - tri ) ),
-                    QPoint( int( self.bl + self.bw * self.cl + tri ), int( self.bt + self.bh * self.cb )  ),
-                    ] )
-                # Polygons
-                painter.drawPolygon( poly1 )
-                painter.drawPolygon( poly2 )
-                painter.drawPolygon( poly3 )
-                painter.drawPolygon( poly4 )
-        elif ( render == False and self.drop == False ):
-            # Dots ( no results )
-            painter.setPen( QtCore.Qt.NoPen )
-            if qpixmap == None:
-                painter.setBrush( QBrush( self.color_2 ) )
+        # Render Image
+        if url != None and qpixmap != None:
+            if self.preview_state in [ "FILE", "IMG", "ANIM", "COMP", "WEB" ]:
+                px, py, draw = self.Draw_Render( painter, qpixmap, None )
+                painter.drawPixmap( int( px ), int( py ), draw )
+            elif self.preview_state == "DIR":
+                px, py, draw = self.Draw_Render( painter, self.qpixmap_dir, qpixmap )
+                painter.drawPixmap( int( px ), int( py ), draw )
+                self.Draw_Text( painter, draw, px, py, ww, hh, os.path.basename( url ) )
             else:
-                painter.setBrush( QBrush( self.color_1 ) )
-            painter.drawEllipse( int( w2 - 0.2 * side ), int( h2 - 0.2 * side ), int( 0.4 * side ), int( 0.4 * side ) )
+                pass
+        elif url != None and qpixmap == None:
+            self.Draw_Circle( painter, self.c_lite, w2, h2, side )
+        else:
+            self.Draw_Circle( painter, self.c_dark, w2, h2, side )
 
         # Information
         if self.state_information == True:
             # Variables
-            s = 20
-            r = 5
-            cor = self.color_2
+            cor = QColor( self.c_dark.name() )
             cor.setAlpha( 200 )
-            text = self.Information_Display()
+            text = self.Overlay_Information()
 
             # Bounding Box
-            box = QRect( int( s ), int( hh - s*6 ), int( ww - s*2 ), int( s*5 ) )
+            rr = 8
+            ss = 20
+            m = 10
+            m2 = 2 * m
+            m4 = 4 * m
+            pw = ww - ss * 2
+            ph = self.info_edge
+            px = ss
+            py = hh - ph
+            box_sqr = QRect( int( px ), int( py ), int( pw ), int( ph+rr ) )
+            box_txt = QRect( int( px+m2 ), int( py+m ), int( pw-m4 ), int( ph ) )
             # Highlight
             painter.setPen( QtCore.Qt.NoPen )
             painter.setBrush( QBrush( cor ) )
-            painter.drawRoundedRect( box, r, r )
+            painter.drawRoundedRect( box_sqr, rr, rr )
             # String
             painter.setBrush( QtCore.Qt.NoBrush )
-            painter.setPen( QPen( self.color_1, 1, Qt.SolidLine ) )
+            painter.setPen( QPen( self.c_text, 1, Qt.SolidLine ) )
             qfont = QFont( "Consolas", 10 )
             painter.setFont( qfont )
-            painter.drawText( box, Qt.AlignCenter, text )
+            painter.drawText( box_txt, Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap, text )
             # Garbage
             del qfont
 
         # Display Color Picker
-        if self.operation == "color_picker":
+        if ( self.operation == "color_picker" and self.anim_play == False ):
             ColorPicker_Render( self, painter, self.ex, self.ey )
 
         # Drag and Drop Triangle
         if ( self.drop == True and self.drag == False ):
-            Painter_Triangle( self, painter, w2, h2, side )
+            Painter_Triangle( painter, w2, h2, side, self.c_chrome )
+    def Draw_Render( self, painter, draw, dir_thumb ):
+        # Variables
+        px = 0
+        py = 0
+        dw = draw.width()
+        dh = draw.height()
+        rew = 1 # rotation error width
+        reh = 1 # rotation error height
 
-class ImagineBoard_Grid( QWidget ):
+        # Display Size
+        if self.state_original == True:
+            width = dw
+            height = dh
+        else:
+            width = self.ww
+            height = self.hh
+
+        # Layers Merge
+        if self.state_underlayer == True or self.state_clip == True or self.state_gridline == True or dir_thumb != None:
+            # Background
+            merge = QPixmap( dw, dh )
+            if self.state_underlayer == True: merge.fill( self.underlayer_color )
+            else:                           merge.fill( self.transparent )
+            # Merge Layers
+            qpainter = QPainter( merge )
+            qpainter.setRenderHint( QPainter.Antialiasing, True )
+
+            # Directory Thumbnail
+            if dir_thumb != None:
+                pixw = dir_thumb.width()
+                pixh = dir_thumb.height()
+                ox = ( dw - pixw ) * 0.5
+                oy = ( dh - pixh ) * 0.5
+                iy = dh * 0.125
+                qpainter.drawPixmap( int( ox ), int( oy + iy ), dir_thumb )
+                box = QRect( int( px + ox ), int( py + oy ), int( pixw ), int( pixh*0.2 ) )
+            # Image
+            qpainter.drawPixmap( px, py, draw )
+
+            # GridLines
+            if self.state_gridline == True:
+                line_width = 4
+                qpainter.setPen( QPen( self.c_chrome, line_width, Qt.SolidLine, Qt.SquareCap, Qt.MiterJoin ) )
+                qpainter.setBrush( QtCore.Qt.NoBrush )
+                for i in range( 0, self.gridline_x + 1 ):
+                    ix = i / self.gridline_x
+                    qpainter.drawLine( int( dw * ix ), int( 0 ), int( dw * ix ), int( dh ) )
+                for i in range( 0, self.gridline_y + 1 ):
+                    iy = i / self.gridline_y
+                    qpainter.drawLine( int( 0 ), int( dh * iy ), int( dw ), int( dh * iy ) )
+
+            # Clip
+            if self.state_clip == True:
+                # Painter
+                qpainter.setPen( QtCore.Qt.NoPen )
+                qpainter.setBrush( QBrush( color_alpha ) )
+
+                # Variables
+                pl = dw * self.clip_l
+                pr = dw * self.clip_r
+                pt = dh * self.clip_t
+                pb = dh * self.clip_b
+                tri = 15
+
+                # Surface
+                area = QPainterPath()
+                area.moveTo( int( 0 ),  int( 0 ) )
+                area.lineTo( int( dw ), int( 0 ) )
+                area.lineTo( int( dw ), int( dh ) )
+                area.lineTo( int( 0 ),  int( dh ) )
+                area.moveTo( int( pl ), int( pt ) )
+                area.lineTo( int( pr ), int( pt ) )
+                area.lineTo( int( pr ), int( pb ) )
+                area.lineTo( int( pl ), int( pb ) )
+                qpainter.drawPath( area )
+
+                # Triangles
+                qpainter.setPen( QPen( color_black, 2, Qt.SolidLine ) )
+                qpainter.setBrush( QBrush( color_white, Qt.SolidPattern ) )
+                poly1 = QPolygon( [
+                    QPoint( int( pl ), int( pt ) ),
+                    QPoint( int( pl + tri ), int( pt ) ),
+                    QPoint( int( pl ), int( pt + tri ) ),
+                    ] )
+                poly2 = QPolygon( [
+                    QPoint( int( pr ), int( pt ) ),
+                    QPoint( int( pr - tri ), int( pt ) ),
+                    QPoint( int( pr ), int( pt + tri ) ),
+                    ] )
+                poly3 = QPolygon( [
+                    QPoint( int( pr ), int( pb ) ),
+                    QPoint( int( pr - tri ), int( pb ) ),
+                    QPoint( int( pr ), int( pb - tri ) ),
+                    ] )
+                poly4 = QPolygon( [
+                    QPoint( int( pl ), int( pb ) ),
+                    QPoint( int( pl + tri ), int( pb ) ),
+                    QPoint( int( pl ), int( pb - tri ) ),
+                    ] )
+                # Polygons
+                qpainter.drawPolygon( poly1 )
+                qpainter.drawPolygon( poly2 )
+                qpainter.drawPolygon( poly3 )
+                qpainter.drawPolygon( poly4 )
+
+            # Painter
+            qpainter.end()
+        else:
+            merge = draw
+
+        # Fail Safe
+        if dw != 0 and dh != 0:
+            # Rotate
+            if self.cam_r != 0:
+                merge, wr, hr, rew, reh = self.Draw_Rotate( merge, dw, dh )
+            # Scale
+            merge = merge.scaled( int( width * rew * self.cam_z ), int( height * reh * self.cam_z ), Qt.KeepAspectRatio, self.scale_method )
+            draw_width = merge.width()
+            draw_height = merge.height()
+
+            # Points
+            px = self.w2 - ( draw_width * 0.5 )  + ( self.cam_x * self.cam_z )
+            py = self.h2 - ( draw_height * 0.5 ) + ( self.cam_y * self.cam_z )
+
+            # Clip Variables
+            if self.cam_x == 0 and self.cam_y == 0 and self.cam_z == 1:
+                self.draw_px = px
+                self.draw_py = py
+                self.draw_width = draw_width
+                self.draw_height = draw_height
+
+            # Return
+            return px, py, merge
+    def Draw_Rotate( self, image, dw, dh ):
+        draw = image
+        if self.cam_r != 0:
+            rotation = QTransform().rotate( self.cam_r, Qt.ZAxis )
+            draw = image.transformed( rotation )
+        wr = draw.width()
+        hr = draw.height()
+        rew = wr / dw
+        reh = hr / dh
+        return draw, wr, hr, rew, reh
+    def Draw_Circle( self, painter, color, px, py, side ):
+        painter.setPen( QtCore.Qt.NoPen )
+        painter.setBrush( QBrush( color ) )
+        ox = 0.2 * side
+        oy = 0.2 * side
+        size = 0.4 * side
+        painter.drawEllipse( int( px - ox ), int( py - oy ), int( size ), int( size ) )
+    def Draw_Text( self, painter, qpixmap, px, py, pw, ph, basename ):
+        if self.cam_r == 0:
+            # Bounding Box
+            pixw = qpixmap.width()
+            pixh = qpixmap.height()
+            ox = ( pw - pixw ) * 0.5
+            oy = ( ph - pixh ) * 0.5
+            iy = self.qpixmap_dir.height() * 0.125 * self.cam_z
+            box = QRect( int( px ), int( py + iy ), int( pixw ), int( pixh * 0.2 ) )
+            """
+            # Highlight
+            painter.setPen( QtCore.Qt.NoPen )
+            painter.setBrush( QBrush( self.c_chrome ) )
+            painter.drawRect( box )
+            """
+            # String
+            painter.setBrush( QtCore.Qt.NoBrush )
+            painter.setPen( QPen( self.c_dark, 1, Qt.SolidLine ) )
+            qfont = QFont( "Consolas" )
+            qfont.setPointSize( 10 )
+            painter.setFont( qfont )
+            painter.drawText( box, QtCore.Qt.AlignCenter|QtCore.Qt.TextWordWrap, basename )
+            # Garbage
+            del qfont
+
+class ImagineBoard_Grid( QtWidgets.QWidget ):
     # General
-    SIGNAL_DRAG = QtCore.pyqtSignal( [ str, dict ] )
-    SIGNAL_DROP = QtCore.pyqtSignal( list )
-    # Grid
-    SIGNAL_MODE = QtCore.pyqtSignal( int )
-    SIGNAL_INDEX = QtCore.pyqtSignal( int )
+    GRID_PARENT = QtCore.pyqtSignal()
+    GRID_LOAD = QtCore.pyqtSignal( str, str, int )
+    GRID_MODE = QtCore.pyqtSignal( int, bool )
+    GRID_DROP = QtCore.pyqtSignal( list )
+    GRID_INDEX = QtCore.pyqtSignal( int )
     # Menu
-    SIGNAL_FUNCTION = QtCore.pyqtSignal( list )
-    SIGNAL_PIN_IMAGE = QtCore.pyqtSignal( [ dict, dict ] )
-    SIGNAL_FULL_SCREEN = QtCore.pyqtSignal( bool )
-    SIGNAL_LOCATION = QtCore.pyqtSignal( str )
-    SIGNAL_ANALYSE = QtCore.pyqtSignal( [ QImage ] )
-    SIGNAL_NEW_DOCUMENT = QtCore.pyqtSignal( [ str, dict ] )
-    SIGNAL_INSERT_LAYER = QtCore.pyqtSignal( [ str, dict ] )
-    SIGNAL_INSERT_REFERENCE = QtCore.pyqtSignal( [ str, dict ] )
-
+    GRID_PIN_INSERT = QtCore.pyqtSignal( str, float, float, str, str, dict )
+    GRID_CYCLE = QtCore.pyqtSignal( str )
+    GRID_FULL_SCREEN = QtCore.pyqtSignal( bool )
+    # Ui
+    GRID_PB_VALUE = QtCore.pyqtSignal( int )
+    GRID_PB_MAX = QtCore.pyqtSignal( int )
 
     # Init
     def __init__( self, parent ):
         super( ImagineBoard_Grid, self ).__init__( parent )
         self.Variables()
+    def sizeHint( self ):
+        return QtCore.QSize( 500,500 )
+
+    # Variables
     def Variables( self ):
         # Widget
         self.ww = 1
@@ -1391,252 +2063,471 @@ class ImagineBoard_Grid( QWidget ):
         self.ex = 0
         self.ey = 0
 
-        # Display
-        self.scale_method = Qt.FastTransformation
-
-        # Compact
-        self.file_search = []
-
-        # Line
-        self.line_index = 0
-        self.line_path = [ None ]
-        self.line_qpixmap = [ None ]
-        # Grid
-        self.grid_size = 200
-        self.grid_fit = Qt.KeepAspectRatioByExpanding
-        self.gix = 0
-        self.giy = 0
-        self.gmx = 3
-        self.gmy = 3
-        self.grid_path = [ [ None ] * self.gmx ] * self.gmy
-        self.grid_qpixmap = [ [ None ] * self.gmx ] * self.gmy
-        self.grid_start = 0
-        self.grid_end = self.gmx * self.gmy
-        self.glt = 0
-        self.glb = 0
-        # Thumbnails
-        self.tw = 200
-        self.th = 200
-        # Clip
-        self.clip_false = { "cstate" : False, "cl" : 0, "ct" : 0, "cr" : 1, "cb" : 1 }
-
         # State
         self.state_maximized = False
         self.state_press = False
         self.state_pickcolor = False
-
-        # State
-        self.state_maximized = False
+        self.state_fit = False # Controller of grid_fit
         # Interaction
         self.operation = None
 
+        # Grid
+        self.grid_thumb = 200 # Grid Size
+        self.grid_precache = 200 # Mb
+        self.grid_clean = 0
+        self.grid_geometry = list()
+        self.grid_method = Qt.SmoothTransformation
+        self.grid_state = None # None "FILE" "ANIM" "COMP" "DIR" "WEB"
+        # Grid Unit
+        self.gix = 0
+        self.giy = 0
+        self.gux = 1 # Grid Units in X
+        self.guy = 1 # Grid Units in Y
+        self.guc = self.gux * self.guy # Grid Unit Count
+        self.gtw = 1 # Thumbnail Width
+        self.gth = 1 # Thumbnail Height
+        self.glt = 1 # Grid Limit Top
+        self.glb = 1 # Grid Limit Bottom
+        # Line
+        self.list_url = list()
+        self.list_qpixmap = list()
+        self.list_size = list()
+        self.list_select = list() # Index matches path and qpixmap
+        self.list_index = -1
+        self.list_count = 0
+        self.list_start = 0
+        self.list_end = 0
+        self.list_geo_index = 0
+        self.list_geo_end = self.list_start + self.guc
+        # Grid Settings
+        self.pagination_index = None
+        self.extra_control = False
+
         # Colors
-        self.color_1 = QColor( "#ffffff" )
-        self.color_2 = QColor( "#000000" )
-        self.color_alpha = QColor( 0, 0, 0, 50 )
-
-        # Function>>
-        self.function_operation = ""
-
+        self.c_lite = QColor( "#ffffff" )
+        self.c_dark = QColor( "#000000" )
+        self.c_chrome = QColor( "#3daee9" )
+        self.c_select = QColor( "#2980b9" )
         # Color Picker
-        self.pigment_o = None
+        self.pigmento_picker = None
+        self.pigmento_sampler = None
         self.qimage_grab = None
         self.color_active = QColor( 0, 0, 0 )
         self.color_previous = QColor( 0, 0, 0 )
+
+        # System
+        self.insert_original_size = False
+        self.scale_method = Qt.SmoothTransformation
+
+        # Icons
+        self.qpixmap_comp, self.comp_size = None, 0
+        self.qpixmap_dir,  self.dir_size  = None, 0
 
         # Drag and Drop
         self.setAcceptDrops( True )
         self.drop = False
         self.drag = False
-    def sizeHint( self ):
-        return QtCore.QSize( 5000,5000 )
 
-    # Relay
-    def Set_FileSearch( self, file_search ):
-        self.file_search = file_search
-    def Set_Pigment_O( self, plugin ):
-        self.pigment_o = plugin
-    def Set_Theme( self, color_1, color_2 ):
-        self.color_1 = color_1
-        self.color_2 = color_2
-    def Set_Size( self, ww, hh, state_maximized ):
-        self.ww = ww
-        self.hh = hh
-        self.w2 = ww * 0.5
-        self.h2 = hh * 0.5
-        self.state_maximized = state_maximized
-        self.resize( ww, hh )
-        self.Render_Matrix()
-    def Set_Function( self, function_operation ):
-        self.function_operation = function_operation
+        # QTimer
+        self.grid_qtimer = QtCore.QTimer()
+
+    # Relay Neutral
+    def Set_Pigment_O( self, pigmento_picker, pigmento_sampler ):
+        self.pigmento_picker = pigmento_picker
+        self.pigmento_sampler = pigmento_sampler
+    def Set_Theme( self, c_lite, c_dark, c_chrome, c_select ):
+        self.c_lite = QColor( c_lite )
+        self.c_dark = QColor( c_dark )
+        self.c_chrome = QColor( c_chrome )
+        self.c_select = QColor( c_select )
+        Style_Icon( self )
+        self.Grid_Image( True )
+        self.update()
+    def Set_ColorPicker( self, boolean ):
+        self.state_pickcolor = boolean 
+        self.update()
+    def Set_Press( self, boolean ):
+        self.state_press = boolean
+        self.update()
+    def Set_Precache( self, grid_precache ):
+        self.grid_precache = grid_precache
+        self.update()
+    def Set_Clean( self, grid_clean ):
+        self.grid_clean = grid_clean
+        self.update()
+    def Set_Insert_Original_Size( self, boolean ):
+        self.insert_original_size = boolean
         self.update()
     def Set_Scale_Method( self, scale_method ):
         self.scale_method = scale_method
         self.update()
 
-    # Display
-    def Display_Default( self ):
-        self.grid_path = [ [ None ] * self.gmx ] * self.gmy
-        self.grid_qpixmap = [ [ None ] * self.gmx ] * self.gmy
-        self.update()
-        self.Camera_Grab()
-    def Display_Path( self, line_path, line_index ):
-        if self.line_path != line_path:
-            self.line_path = line_path
-            self.line_qpixmap = [ None ] * len( line_path )
-        self.line_index = line_index
-        # Update
-        self.Render_Matrix()
-        self.update()
-        self.Camera_Grab()
+    # Grid Relay
+    def Set_Size( self, ww, hh, state_maximized, grid_thumb, extra_control ):
+        # Variable
+        self.state_maximized = state_maximized
+        # Checks
+        cw = self.ww != ww
+        ch = self.hh != hh
+        ct = self.grid_thumb != grid_thumb
+        ce = self.extra_control != extra_control
+        check = cw == True or ch == True or ct == True or ce == True
+        if check:
+            # Variable
+            self.ww = ww
+            self.hh = hh
+            self.grid_thumb = grid_thumb
+            self.extra_control = extra_control
 
-    # Grid
-    def Grid_Size( self, value ):
-        self.grid_size = value
-        self.Render_Matrix()
-        self.update()
-        self.Camera_Grab()
-    def Grid_Fit( self, boolean ):
-        if boolean == False:
-            self.grid_fit = Qt.KeepAspectRatioByExpanding
-        elif boolean == True:
-            self.grid_fit = Qt.KeepAspectRatio
-        self.update()
-        self.Camera_Grab()
-    def Grid_Index( self, ex, ey ):
-        # Grid Index
-        self.gix = Limit_Range( int( ( ex / self.ww ) * self.gmx ), 0, self.gmx - 1 )
-        self.giy = Limit_Range( int( ( ey / self.hh ) * self.gmy ), 0, self.gmy - 1 )
-        # Line Index
-        line_index = self.grid_start + gi_to_pi( self.gix, self.giy, self.gmx )
-        line_limit = len( self.line_path ) - 1
-        self.line_index = Limit_Range( line_index, 0, line_limit )
-        # Signal
-        self.SIGNAL_INDEX.emit( self.line_index )
-    def Grid_Increment( self, increment ):
+            # Calculate
+            self.w2 = ww * 0.5
+            self.h2 = hh * 0.5
+            # Widget
+            self.resize( ww, hh )
+
+            # Grid
+            self.List_Excess( self.list_start, self.list_end )
+            self.Grid_Geometry( self.ww, self.hh, self.grid_thumb )
+            self.Grid_Image( ct or ce )
+    # Grid Display
+    def Grid_Line( self, list_index, list_url, update ):
+        # Checks
+        ci = self.list_index != list_index
+        cp = self.list_url != list_url
+        if ci == True or cp == True or update == True:
+            # Variables
+            self.list_index = list_index
+            self.list_url = list_url
+            # Grid
+            if cp == True:
+                self.List_Clear()
+            self.List_Index( self.list_index )
+            self.Grid_Image( update )
+    def Grid_Fit( self, state_fit ):
+        if self.state_fit != state_fit:
+            self.state_fit = state_fit
+            self.Grid_Image( True )
+    def Grid_Default( self ):
         # Variables
-        limit = len( self.line_path ) - 1
-        # Calculations
-        gix, giy = pi_to_gi( self.line_index, self.gmx, self.gmy )
-        if increment < 0:
-            delta = self.gmx * increment
-            self.line_index = Limit_Range( self.grid_start + gix + delta, 0, limit )
-        if increment > 0:
-            self.line_index = Limit_Range( self.grid_end + gix, 0, limit )
-        # Signal
-        self.SIGNAL_INDEX.emit( self.line_index )
+        self.list_url = list()
+        self.list_qpixmap = list()
+        self.list_size = list()
+        self.list_index = -1
+        self.list_start = 0
+        self.list_end = 0
+        self.list_geo_end = 0
         # Update
-        self.Render_Matrix()
         self.update()
         self.Camera_Grab()
-
-    # Render
-    def Render_Matrix( self ):
-        if len( self.line_path ) > 0:
-            # Grid Matrix
-            gmx = round( self.ww / self.grid_size )
-            gmy = round( ( self.hh * 0.8 ) / self.grid_size )
-            if gmx <= 0:gmx = 1
-            if gmy <= 0:gmy = 1
-            # Thumbnails
-            self.tw = int( self.ww / gmx )
-            self.th = int( self.hh / gmy )
-
-            # Screen Size
-            screen = self.gmx * self.gmy
-            # Screen Variation
-            if ( self.gmx != gmx or self.gmy != gmy ):
-                self.gmx = gmx
-                self.gmy = gmy
-            # Screen Inercia
-            if self.line_index < self.grid_start:
-                self.grid_start = math.floor( self.line_index / self.gmx ) * self.gmx
-            if self.line_index >= self.grid_end:
-                self.grid_start = math.ceil( ( self.line_index - screen + 1 ) / self.gmx ) * self.gmx
-            # Screen End
-            self.grid_end = self.grid_start + screen
-
-            # Clean
-            margin = 100
-            cs = self.grid_start - margin
-            ce = self.grid_end + margin
-            for i in range( 0, cs ):
-                self.line_qpixmap[i] = None
-            for i in range( ce, len( self.line_qpixmap ) ):
-                self.line_qpixmap[i] = None
-
-            # Construct
-            default = QPixmap()
-            archive = Display_Icon( self, "bundle_archive" )
-            string = []
-            render = []
-            for i in range( self.grid_start, self.grid_end ):
-                try:
-                    path = self.line_path[i]
-                    qpixmap = self.line_qpixmap[i]
-                    if qpixmap in [ None, False, True ]:
-                        qpixmap = QPixmap( path )
-                        if qpixmap.isNull() == False:
-                            self.line_qpixmap[i] = qpixmap
-                        elif zipfile.is_zipfile( path ) == True:
-                            archive = zipfile.ZipFile( path, "r" )
-                            name_list = archive.namelist()
-                            name_list.sort()
-                            qpixmap = True
-                            for name in name_list:
-                                try:
-                                    if name.split( "." )[1] in self.file_search:
-                                        extract = archive.open( name )
-                                        data = extract.read()
-                                        qpixmap = QPixmap()
-                                        qpixmap.loadFromData( data )
-                                        if qpixmap.isNull() == False:
-                                            self.line_qpixmap[i] = qpixmap
-                                            break
-                                except:
-                                    qpixmap = True
-                        else:
-                            qpixmap = True
-                except:
-                    path = None
-                    qpixmap = None
-                string.append( path )
-                render.append( qpixmap )
-
-            # Lists
-            self.grid_path = preview_to_grid( string, self.gmx, self.gmy )
-            self.grid_qpixmap = preview_to_grid( render, self.gmx, self.gmy )
-
-    # Pagination
-    def Pagination_Reset( self, ey ):
-        oz = ey % self.th
-        self.glt = ey - oz
-        self.glb = self.glt + self.th
-    def Pagination_Stylus( self, ey ):
-        # Event
-        ey = Limit_Range( ey, 0, self.hh )
+    # Grid Operators
+    def Grid_Geometry( self, ww, hh, grid_thumb ):
         # Variables
-        margin = 2
-        limit = len( self.line_path )
-        update = False
-        # Logic
-        if ey > ( self.glb + margin ):
-            self.grid_start = Limit_Range( self.grid_start - self.gmx, 0, limit )
-            self.grid_end = Limit_Range( self.grid_end - self.gmx, 0, limit )
-            self.Pagination_Reset( ey )
-            update = True
-        if ey < ( self.glt - margin ):
-            self.grid_start = Limit_Range( self.grid_start + self.gmx, 0, limit )
-            self.grid_end = Limit_Range( self.grid_end + self.gmx, 0, limit )
-            self.Pagination_Reset( ey )
-            update = True
-        # Update
+        grid_geometry = list()
+        try:
+            # Variables
+            px = [0]
+            py = [0]
+            pw = list()
+            ph = list()
+            # Grid Units
+            gtx = grid_thumb * 0.95
+            gty = grid_thumb
+            lx = Limit_Range( ww / gtx, 0, ww )
+            ly = Limit_Range( hh / gty, 0, hh )
+            ux = Limit_Mini( int( lx ), 1 )
+            uy = Limit_Mini( int( ly ), 1 )
+            # Variables
+            self.gux = ux
+            self.guy = uy
+            self.guc = ux * uy
+            # Factor
+            dx = ww - ( gtx * ux )
+            dy = hh - ( gty * uy )
+            fx = dx / ux
+            fy = dy / uy
+            # Points
+            for i in range( 1, ux + 1 ):px.append( int( gtx * i + fx * i ) )
+            for i in range( 1, uy + 1 ):py.append( int( gty * i + fy * i ) )
+            for i in range( 1, len( px ) ):pw.append( px[i] - px[i-1] )
+            for i in range( 1, len( py ) ):ph.append( py[i] - py[i-1] )
+            # Variables
+            self.gtw = int( max( pw ) )
+            self.gth = int( max( ph ) )
+            # Geometry Construct
+            grid_geometry = [ [ None for _ in range( ux ) ] for _ in range( uy ) ]
+            for y in range( 0, uy ):
+                for x in range( 0, ux ):
+                    try:grid_geometry[y][x] = ( px[x], py[y], pw[x], ph[y] )
+                    except:pass
+
+            # Display Range
+            self.list_geo_end = self.list_start + self.guc
+            self.List_Index( self.list_index )
+
+            # Progress Bar
+            self.GRID_PB_VALUE.emit( 0 )
+            self.GRID_PB_MAX.emit( self.guc )
+        except:
+            self.gux = 1
+            self.guy = 1
+            self.guc = 1
+            self.gtw = 1
+            self.gth = 1
+        # Return
+        self.grid_geometry = grid_geometry
+    def Grid_Image( self, update ):
+        # Icons
         if update == True:
-            self.Render_Matrix()
+            self.qpixmap_comp, self.comp_size = Item_Icon( self.qicon_comp, self.gtw, self.gth )
+            self.qpixmap_dir,  self.dir_size  = Item_Icon( self.qicon_dir, self.gtw, self.gth )
+        # Construct
+        if self.list_count > 0:
+            self.List_Load( self.list_start, self.list_end, self.list_index, self.list_url, update )
+        # Update
+        try:
             self.update()
             self.Camera_Grab()
+        except:pass
+    def Grid_Index( self, ex, ey ):
+        # Cursor
+        ex = Limit_Range( ex, 0, self.ww )
+        ey = Limit_Range( ey, 0, self.hh )
+        # Geometry
+        gix = None
+        giy = None
+        for x in range( 0, self.gux ):
+            item = self.grid_geometry[0][x]
+            px = item[0]
+            pw = item[2]
+            cx = px <= ex <= px+pw
+            if cx == True:
+                gix = x
+                break
+        for y in range( 0, self.guy ):
+            item = self.grid_geometry[y][0]
+            py = item[1]
+            ph = item[3]
+            cy = py <= ey <= py+ph
+            if cy == True:
+                giy = y
+                break
+        if gix != None and giy != None:
+            # Variables
+            self.gix = gix
+            self.giy = giy
+            # Calculations
+            self.list_geo_index = self.list_start + gix + giy * self.gux
+            self.list_index = Limit_Range( self.list_geo_index, 0, len( self.list_url )-1 )
+            # Signal
+            self.GRID_INDEX.emit( self.list_index )
+    def Grid_Increment( self, increment ):
+        # Variables
+        len_path = self.list_count - 1
+        # Calculations
+        if increment < 0:
+            count = int( ( self.list_index - self.list_start ) / self.gux ) * self.gux
+            list_index = Limit_Range( self.list_index - count - self.gux, 0, len_path )
+        if increment > 0:
+            count = int( ( self.list_geo_end - self.list_index - 1 ) / self.gux ) * self.gux
+            list_index = Limit_Range( self.list_index + count + self.gux, 0, len_path )
+        # Signal
+        self.GRID_INDEX.emit( list_index )
+    def Grid_Unload( self ):
+        lim_start = Limit_Range( self.list_start - self.grid_clean, 0, self.list_count )
+        lim_end = Limit_Range( self.list_end + self.grid_clean, 0, self.list_count )
+        self.List_Unload( 0, lim_start )
+        self.List_Unload( lim_end, self.list_count )
+    # List
+    def List_Clear( self, select=True ):
+        self.list_count = len( self.list_url )
+        self.list_qpixmap = [ None ] * self.list_count
+        self.list_size = [ 0 ] * self.list_count
+        if select == True:
+            self.list_select = [ False ] * self.list_count
+    def List_Index( self, list_index ):
+        # Variables
+        li = int( list_index / self.gux )
+        gi = int( li * self.gux )
+        if list_index <= self.list_start:
+            self.list_start = gi
+            self.list_geo_end = self.list_start + self.guc
+        if list_index >= self.list_geo_end:
+            self.list_geo_end = gi + self.gux
+            self.list_start = self.list_geo_end - self.guc
+        self.list_end = min( self.list_geo_end, self.list_count )
+    def List_Load( self, start, end, list_index, list_url, update ):
+        # Variables
+        amplitude = end - start
+        check = amplitude > 100
+        # Cycle
+        for index in range( start, end ):
+            try:
+                # Progress Bar
+                if check == True:
+                    self.GRID_PB_VALUE.emit( index + 1 )
+                # Read
+                if self.list_qpixmap[index] == None or update == True: # Load files not loaded
+                    # Variables
+                    grid_url = list_url[index]
+
+                    # Item ( to Trouble shoot )
+                    # qpixmap, size = self.Item_Load( grid_url )
+                    # self.list_qpixmap[index] = qpixmap
+                    # self.list_size[index] = size
+
+                    # Worker
+                    self.Worker_Single( index, grid_url )
+            except Exception as e:
+                # QtCore.qDebug( f"error_{ index } = { e }" )
+                pass
+        # Progress Bar
+        self.GRID_PB_VALUE.emit( 0 )
+        self.GRID_PB_MAX.emit( self.guc )
+    def List_Precache( self ):
+        if self.list_url != None:
+            # Time Watcher
+            start = QtCore.QDateTime.currentDateTimeUtc()
+
+            # Progress Bar
+            self.GRID_PB_VALUE.emit( 0 )
+            self.GRID_PB_MAX.emit( 0 )
+
+            # Unload
+            self.Grid_Unload()
+
+            # Variables
+            total_size = 0
+            lim_start = self.list_start
+            lim_end = self.list_end
+            # Display
+            for i in range( self.list_start, self.list_end ):
+                qpixmap, size = self.Item_Load( self.list_url[i] )
+                total_size += size
+                self.list_qpixmap[i] = qpixmap
+                self.list_size[i] = size
+            # Out of Display
+            for i in range( 0, self.list_count ):
+                QApplication.processEvents()
+                if total_size <= self.grid_precache:
+                    if lim_start > 0:
+                        lim_start = Limit_Range( self.list_start - i - 1, 0, self.list_count )
+                        qpixmap, size = self.Item_Load( self.list_url[lim_start] )
+                        total_size += size
+                        self.list_qpixmap[lim_start] = qpixmap
+                        self.list_size[lim_start] = size
+                    if lim_end < self.list_count - 1:
+                        lim_end = Limit_Range( self.list_end + i, 0, self.list_count )
+                        qpixmap, size = self.Item_Load( self.list_url[lim_end] )
+                        total_size += size
+                        self.list_qpixmap[lim_end] = qpixmap
+                        self.list_size[lim_end] = size
+                else:
+                    break
+
+    	    # Progress Bar
+            self.GRID_PB_VALUE.emit( 0 )
+            self.GRID_PB_MAX.emit( self.guc )
+
+            # Variables
+            amount = lim_end - lim_start
+
+            # Time Watcher
+            end = QtCore.QDateTime.currentDateTimeUtc()
+            delta = start.msecsTo( end )
+            time = QTime( 0,0 ).addMSecs( delta )
+            # Print
+            string = f"{ DOCKER_NAME } | PRECACHE { time.toString( 'hh:mm:ss.zzz' ) } | AMOUNT { amount } images | RAM { round( total_size, 3 ) } Mb"
+            try:QtCore.qDebug( string )
+            except:pass
+    def List_Size( self, start, end ):
+        ram = 0
+        for i in range( start, end ):
+            try:ram += self.list_size[i]
+            except:pass
+        return ram
+    def List_Unload( self, start, end ):
+        for i in range( start, end ):
+            try:
+                self.list_qpixmap[i] = None
+                self.list_size[i] = 0
+            except:
+                break
+    def List_Excess( self, start, end ):
+        for i in range( 0, start ):
+            try:
+                self.list_qpixmap[i] = None
+                self.list_size[i] = 0
+            except:
+                break
+        for i in range( end, self.list_count ):
+            try:
+                self.list_qpixmap[i] = None
+                self.list_size[i] = 0
+            except:
+                break
+
+    # Item
+    def Item_Load( self, grid_url ):
+        # Variables
+        qpixmap = None
+        size = 0
+        # File
+        if os.path.isfile( grid_url ) == True:
+            # Reader
+            reader = QImageReader( grid_url )
+            check_read = reader.canRead()
+            check_anim = reader.supportsAnimation()
+            check_comp = zipfile.is_zipfile( grid_url )
+            if check_read == True and check_comp == False:
+                # Static
+                if check_anim == False:
+                    qpixmap, size = Fit_Image( reader, self.gtw, self.gth, self.state_fit )
+                # Animation
+                elif check_anim == True:
+                    qpixmap, size = Fit_Image( reader, self.gtw, self.gth, self.state_fit )
+            # Compressed
+            elif check_comp == True:
+                qpixmap, size = Fit_Compressed( grid_url, self.gtw, self.gth, self.state_fit )
+        # Directory
+        elif os.path.isdir( grid_url ) == True:
+            qpixmap, size = Fit_Directory( grid_url, self.gtw, self.gth )
+        # HTML
+        elif Check_Html( grid_url ) == True:
+            qpixmap = Download_QPixmap( grid_url )
+            if qpixmap != None:
+                qpixmap, size = Fit_QPixmap( qpixmap, self.gtw, self.gth, self.state_fit, self.grid_method )
+        # Return
+        return qpixmap, size
+    # Worker
+    def Worker_Single( self, index, grid_url ):
+        worker = Worker_Reader()
+        worker.GRID_READER.connect( self.Worker_Index )
+        worker.run( self, index, grid_url, self.gtw, self.gth, self.state_fit, self.grid_method )
+    def Worker_Index( self, index, qpixmap, size ):
+        self.list_qpixmap[ index ] = qpixmap[0]
+        self.list_size[ index ] = size
 
     # Camera
+    def Camera_Reset( self, ex, ey ):
+        oz = ey % self.gth
+        self.glt = ey - oz
+        self.glb = self.glt + self.gth
+        self.pagination_index = self.list_index
+    def Camera_Stylus( self, ex, ey ):
+        # Variables
+        ey = Limit_Range( ey, 0, self.hh )
+        margin = 2
+        # Logic
+        if ey > ( self.glb + margin ):
+            self.Camera_Reset( ex, ey )
+            self.Grid_Increment( -1 )
+        if ey < ( self.glt - margin ):
+            self.Camera_Reset( ex, ey )
+            self.Grid_Increment( 1 )
+        # Signal
+        if self.pagination_index != None:
+            self.GRID_INDEX.emit( self.pagination_index )
+            self.pagination_index = None
     def Camera_Grab( self ):
         try:self.qimage_grab = self.grab().toImage()
         except:pass
@@ -1647,19 +2538,20 @@ class ImagineBoard_Grid( QWidget ):
 
         # Variables
         self.state_press = False
-        state_null = self.grid_qpixmap == None
-        state_insert = Insert_Check( self )
-        string_pickcolor = "Picker"
-        if self.pigment_o == None:
-            string_pickcolor += " [RGB]"
+        state_null = self.list_qpixmap == list()
+        check_insert = Check_Insert()
 
         # Indexes
-        grid_path = self.grid_path[self.giy][self.gix]
-        grid_qpixmap = self.grid_qpixmap[self.giy][self.gix]
-        # Clip
-        clip = { "cstate" : False, "cl": 0, "ct": 0, "cw": 1, "ch": 1 }
+        try:
+            url = self.list_url[ self.list_index ]
+            qpixmap = self.list_qpixmap[ self.list_index ]
+            select_url = self.Selection_List()
+        except:
+            url = None
+            qpixmap = None
+            select_url = None
         # Cursor
-        Cursor_Icon( self )
+        Icon_Cursor( self.state_pickcolor, self.state_press )
 
         #endregion
         #region Menu
@@ -1668,176 +2560,221 @@ class ImagineBoard_Grid( QWidget ):
         qmenu = QMenu( self )
 
         # General
-        action_function = qmenu.addAction( "Function >> " + self.function_operation )
-        action_pin = qmenu.addAction( "Pin Reference" )
-        action_full_screen = qmenu.addAction( "Full Screen" )
+        action_pin_reference = qmenu.addAction( "Pin Reference" )
         qmenu.addSeparator()
+        # Grid
+        menu_grid = qmenu.addMenu( "Grid" )
+        action_grid_fit = menu_grid.addAction( "Display Fit" )
+        action_grid_precache = menu_grid.addAction( "Precache List" )
+        # Search ( Rename )
+        menu_search = qmenu.addMenu( "Search" )
+        action_search_null = menu_search.addAction( "[NULL]" )
+        action_search_copy = menu_search.addAction( "[ORIGINAL] [COPY]" )
+        action_search_clean = menu_search.addAction( "Clean [TAGS]" )
+        # Modify ( Change )
+        menu_modify = qmenu.addMenu( "Modify" )
+        action_modify_fix = menu_modify.addAction( "Fix (to SRGB)" )
+        action_modify_premult = menu_modify.addAction( "Pre-Multiply" )
         # File
         menu_file = qmenu.addMenu( "File" )
-        action_file_location = menu_file.addAction( "File Location" )
-        action_file_copy = menu_file.addAction( "Copy Path" )
+        action_file_location = menu_file.addAction( "Open Location" )
+        action_file_path = menu_file.addAction( "Copy Path" )
+        action_file_data = menu_file.addAction( "Copy Image" )
         # Color
         menu_color = qmenu.addMenu( "Color" )
-        action_pick_color = menu_color.addAction( string_pickcolor )
-        action_analyse = menu_color.addAction( "Analyse" )
+        action_color_analyse = menu_color.addAction( "Color Analyse" )
+        action_color_lut = menu_color.addAction( "LUT to Image" )
         # Insert
         menu_insert = qmenu.addMenu( "Insert" )
-        action_document = menu_insert.addAction( "Document" )
+        action_insert_document = menu_insert.addAction( "Document" )
         action_insert_layer = menu_insert.addAction( "Layer" )
-        action_insert_ref = menu_insert.addAction( "Reference" )
+        action_insert_reference = menu_insert.addAction( "Reference" )
+        # Screen
+        qmenu.addSeparator()
+        action_full_screen = qmenu.addAction( "Full Screen" )
+
+        # endregion
+        #region State
 
         # Check Full Screen
+        action_grid_fit.setCheckable( True )
+        action_grid_fit.setChecked( self.state_fit )
         action_full_screen.setCheckable( True )
         action_full_screen.setChecked( self.state_maximized )
-        # Check Color
-        action_pick_color.setCheckable( True )
-        action_pick_color.setChecked( self.state_pickcolor )
 
-        # Disable General
+        # Disables
         if state_null == True:
-            action_function.setEnabled( False )
-            action_pin.setEnabled( False )
-        # Disable File
-        if state_null == True:
+            action_pin_reference.setEnabled( False )
+            menu_grid.setEnabled( False )
+            menu_search.setEnabled( False )
+            menu_modify.setEnabled( False )
             menu_file.setEnabled( False )
-        # Disable Color
-        if state_null == True:
-            menu_color.setEnabled( False )
-        if state_null == True or self.pigment_o == None:
-            action_analyse.setEnabled( False )
-        # Disable Insert
-        if state_null == True:
             menu_insert.setEnabled( False )
-        if state_insert == False:
+        if self.pigmento_picker == None:
+            action_color_analyse.setEnabled( False )
+        if self.pigmento_sampler == None: 
+            action_color_lut.setEnabled( False )
+        if check_insert == False:
             action_insert_layer.setEnabled( False )
-            action_insert_ref.setEnabled( False )
+            action_insert_reference.setEnabled( False )
 
         #endregion
         #region Action
 
         # Mapping
-        if grid_qpixmap != None:
+        len_path = len( self.list_url )
+        if self.list_geo_index < len_path:
             action = qmenu.exec_( self.mapToGlobal( event.pos() ) )
-
             # General
-            if action == action_function:
-                self.SIGNAL_FUNCTION.emit( [ grid_path ] )
-            if action == action_pin:
-                pin = { "bx" : self.w2, "by" : self.h2, "image_path" : grid_path }
-                self.SIGNAL_PIN_IMAGE.emit( pin, self.clip_false )
-            if action == action_full_screen:
-                self.SIGNAL_FULL_SCREEN.emit( not self.state_maximized )
-
+            if action == action_pin_reference:
+                self.GRID_PIN_INSERT.emit( "image", self.w2, self.h2, None, url, clip_false )
+            # Grid
+            if action == action_grid_fit:
+                self.Grid_Fit( not self.state_fit )
+            if action == action_grid_precache:
+                self.List_Precache()
+            # Search
+            if action == action_search_null:
+                self.GRID_CYCLE.emit( "NULL" )
+            if action == action_search_copy:
+                self.GRID_CYCLE.emit( "COPY" )
+            if action == action_search_clean:
+                self.GRID_CYCLE.emit( "CLEAN" )
+            # Modify
+            if action == action_modify_fix:
+                self.GRID_CYCLE.emit( "FIX" )
+            if action == action_modify_premult:
+                self.GRID_CYCLE.emit( "PRE_MULTIPLY" )
             # File
             if action == action_file_location:
-                self.SIGNAL_LOCATION.emit( grid_path )
-            if action == action_file_copy:
-                Path_Copy( self, grid_path )
-
-            # Color
-            if action == action_pick_color:
-                self.state_pickcolor = not self.state_pickcolor
-            if action == action_analyse:
-                qimage = grid_qpixmap.toImage()
-                self.SIGNAL_ANALYSE.emit( qimage )
-
+                File_Open_Location( url )
+            if action == action_file_path:
+                File_Copy_Path( url )
+            if action == action_file_data:
+                File_Copy_Image( url )
+            # Colro
+            if action == action_color_analyse:
+                qimage = qpixmap.toImage()
+                Color_Analyse( self.pigmento_picker, qimage )
+            if action == action_color_lut:
+                list_url = [ url ]
+                list_url.extend( select_url )
+                Color_LUT_to_Image( self.pigmento_sampler, list_url )
             # Insert
-            if action == action_document:
-                self.SIGNAL_NEW_DOCUMENT.emit( grid_path, clip )
+            if action == action_insert_document:
+                Insert_Document( self, url, clip_false )
             if action == action_insert_layer:
-                self.SIGNAL_INSERT_LAYER.emit( grid_path, clip )
-            if action == action_insert_ref:
-                self.SIGNAL_INSERT_REFERENCE.emit( grid_path, clip )
+                Insert_Layer( self, url, clip_false )
+            if action == action_insert_reference:
+                Insert_Reference( self, url, clip_false )
+            # Screen
+            if action == action_full_screen:
+                self.GRID_FULL_SCREEN.emit( not self.state_maximized )
 
         #endregion
+
     # Mouse Events
     def mousePressEvent( self, event ):
         # Variable
         self.state_press = True
-
         # Event
+        em = event.modifiers()
+        eb = event.buttons()
         ex = event.x()
         ey = event.y()
         self.ox = ex
         self.oy = ey
         self.ex = ex
         self.ey = ey
-
-        # Functions
-        Cursor_Icon( self )
+        # Cursor
+        Icon_Cursor( self.state_pickcolor, self.state_press )
         self.Grid_Index( ex, ey )
-
         # LMB
-        if ( event.modifiers() == QtCore.Qt.NoModifier and event.buttons() == QtCore.Qt.LeftButton ):
+        if em == QtCore.Qt.NoModifier and eb == QtCore.Qt.LeftButton:
             if self.state_pickcolor == True:
                 self.operation = "color_picker"
-                ColorPicker_Event( self, self.ex, self.ey, self.qimage_grab, True )
+                ColorPicker_Event( self, ex, ey, self.qimage_grab, True )
             else:
                 self.operation = "neutral_press"
-        if ( event.modifiers() == QtCore.Qt.ShiftModifier and event.buttons() == QtCore.Qt.LeftButton ):
+        if em == QtCore.Qt.ShiftModifier and eb == QtCore.Qt.LeftButton:
             self.operation = "camera_move"
-        if ( event.modifiers() == QtCore.Qt.ControlModifier and event.buttons() == QtCore.Qt.LeftButton ):
-            self.operation = "pagination"
-            self.Pagination_Reset( ey )
-        if ( event.modifiers() == QtCore.Qt.AltModifier and event.buttons() == QtCore.Qt.LeftButton ):
+            self.Camera_Reset( ex, ey )
+        if em == QtCore.Qt.ControlModifier and eb == QtCore.Qt.LeftButton:
+            self.operation = "select_plus"
+            self.Selection_Plus( ex, ey )
+        if em == QtCore.Qt.AltModifier and eb == QtCore.Qt.LeftButton:
             self.operation = "drag_drop"
-
         # MMB
-        if ( event.modifiers() == QtCore.Qt.NoModifier and event.buttons() == QtCore.Qt.MiddleButton ):
+        if em == QtCore.Qt.NoModifier and eb == QtCore.Qt.MiddleButton:
             self.operation = "camera_move"
-
+            self.Camera_Reset( ex, ey )
         # RMB
-        if ( event.modifiers() == QtCore.Qt.NoModifier and event.buttons() == QtCore.Qt.RightButton ):
+        if em == QtCore.Qt.NoModifier and eb == QtCore.Qt.RightButton:
             self.operation = None
             self.Context_Menu( event )
-        if ( event.modifiers() == QtCore.Qt.ShiftModifier and event.buttons() == QtCore.Qt.RightButton ):
-            self.operation = "camera_scale"
-        if ( event.modifiers() == QtCore.Qt.ControlModifier and event.buttons() == QtCore.Qt.RightButton ):
-            self.operation = "pagination"
-            self.Pagination_Reset( ey )
-        if ( event.modifiers() == QtCore.Qt.AltModifier and event.buttons() == QtCore.Qt.RightButton ):
+        if em == QtCore.Qt.ShiftModifier and eb == QtCore.Qt.RightButton:
+            self.operation = "camera_move"
+            self.Camera_Reset( ex, ey )
+        if em == QtCore.Qt.ControlModifier and eb == QtCore.Qt.RightButton:
+            self.operation = "select_minus"
+            self.Selection_Minus( ex, ey )
+        if em == QtCore.Qt.AltModifier and eb == QtCore.Qt.RightButton:
             self.operation = "drag_drop"
-
         # Update
         self.update()
     def mouseMoveEvent( self, event ):
         # Variable
         self.state_press = True
-
         # Event
         ex = event.x()
         ey = event.y()
         self.ex = ex
         self.ey = ey
-
         # Neutral
         if self.operation == "neutral_press":
             self.Grid_Index( ex, ey )
         if self.operation == "color_picker":
-            ColorPicker_Event( self, self.ex, self.ey, self.qimage_grab, True )
+            ColorPicker_Event( self, ex, ey, self.qimage_grab, True )
         # Camera
         if self.operation == "camera_move":
-            pass
-        if self.operation == "camera_scale":
-            pass
-        # Pagination
-        if self.operation == "pagination":
-            self.Pagination_Stylus( ey )
+            self.Camera_Stylus( ex, ey )
+        # Select
+        if self.operation == "select_plus":
+            self.Selection_Plus( ex, ey )
+        if self.operation == "select_minus":
+            self.Selection_Minus( ex, ey )
         # Drag Drop
         if self.operation == "drag_drop":
-            path = self.grid_path[self.giy][self.gix]
-            clip = { "cstate" : False, "cl": 0, "ct": 0, "cw": 1, "ch": 1 }
-            Insert_Drag( self, path, clip )
-
+            url = self.list_url[ self.list_index ]
+            Insert_Drag( self, url, clip_false, True )
         # Update
         self.update()
     def mouseDoubleClickEvent( self, event ):
-        self.SIGNAL_MODE.emit( 0 )
+        # Variables
+        try:    url = self.list_url[ self.list_index ]
+        except: url = None
+        # Event
+        em = event.modifiers()
+        eb = event.buttons()
+        # LMB
+        if em == QtCore.Qt.NoModifier and eb == QtCore.Qt.LeftButton:
+            self.GRID_MODE.emit( 0, False )
+        if em == QtCore.Qt.ShiftModifier and eb == QtCore.Qt.LeftButton:
+            if os.path.isdir( url ):
+                self.GRID_LOAD.emit( url, None, 0 )
+        if em == QtCore.Qt.ControlModifier and eb == QtCore.Qt.LeftButton:
+            self.Selection_All()
+        # RMB
+        if em == QtCore.Qt.ShiftModifier and eb == QtCore.Qt.RightButton:
+            self.GRID_PARENT.emit()
+        if em == QtCore.Qt.ControlModifier and eb == QtCore.Qt.RightButton:
+            self.Selection_Clear()
     def mouseReleaseEvent( self, event ):
         # Variables
         self.state_press = False
-        # Function
-        Cursor_Icon( self )
+        self.selection = None
+        # Cursor
+        Icon_Cursor( self.state_pickcolor, self.state_press )
         if self.operation == "color_picker":
             ColorPicker_Event( self, self.ex, self.ey, self.qimage_grab, False )
         # Variables
@@ -1845,50 +2782,99 @@ class ImagineBoard_Grid( QWidget ):
         # Update
         self.update()
         self.Camera_Grab()
+    # Selection
+    def Selection_Plus( self, ex, ey ):
+        self.Grid_Index( ex, ey )
+        grid_url = self.list_url[ self.list_index ]
+        self.list_select[ self.list_index ] = True
+    def Selection_Minus( self, ex, ey ):
+        self.Grid_Index( ex, ey )
+        self.list_select[ self.list_index ] = False
+    def Selection_All( self ):
+        for i in range( 0, len( self.list_select ) ):
+            self.list_select[i] = True
+    def Selection_Clear( self ):
+        for i in range( 0, len( self.list_select ) ):
+            self.list_select[i] = False
+    def Selection_List( self ):
+        selection_list = list()
+        for i in range( 0, len( self.list_url ) ):
+            if self.list_select[i] == True:
+                selection_list.append( self.list_url[i] )
+        return selection_list
+
     # Wheel Event
     def wheelEvent( self, event ):
         delta_y = event.angleDelta().y()
         angle = 5
-        if delta_y >= angle:
-            self.Grid_Increment( +1 )
-        if delta_y <= -angle:
-            self.Grid_Increment( -1 )
+        if delta_y >= angle:    self.Grid_Increment( -1 )
+        if delta_y <= -angle:   self.Grid_Increment( +1 )
+
     # Drag and Drop Event
     def dragEnterEvent( self, event ):
-        if event.mimeData().hasImage:
+        mime_data, format_id = Insert_Drop( self, event )
+        if len( mime_data ) > 0 or format_id == drag_id:
+            self.state_press = False
             self.drop = True
             event.accept()
         else:
             event.ignore()
         self.update()
     def dragMoveEvent( self, event ):
-        if event.mimeData().hasImage:
+        mime_data, format_id = Insert_Drop( self, event )
+        if len( mime_data ) > 0 or format_id == drag_id:
+            self.state_press = False
             self.drop = True
             event.accept()
         else:
             event.ignore()
         self.update()
     def dragLeaveEvent( self, event ):
+        self.state_press = False
         self.drop = False
         event.accept()
         self.update()
     def dropEvent( self, event ):
-        if event.mimeData().hasImage:
+        mime_data, format_id = Insert_Drop( self, event )
+        if len( mime_data ) > 0 or format_id == drag_id:
             if ( self.drop == True and self.drag == False ):
                 event.setDropAction( Qt.CopyAction )
-                mime_data = Drop_Inside( self, event, False )
-                self.SIGNAL_DROP.emit( mime_data )
+                self.GRID_DROP.emit( mime_data )
             event.accept()
         else:
             event.ignore()
+        self.state_press = False
         self.drop = False
         self.drag = False
         self.update()
+
+    # Timer
+    def Grid_Timer_Event( self ):
+        self.Grid_Timer_Stop()
+        self.Grid_Timer_Start( lambda: self.Grid_Image( True ) )
+    def Grid_Timer_Start( self, function ):
+        self.grid_qtimer = QtCore.QTimer()
+        self.grid_qtimer.setSingleShot( True )
+        self.grid_qtimer.setInterval( 1000 )
+        self.grid_qtimer.timeout.connect( function )
+        self.grid_qtimer.start()
+    def Grid_Timer_Stop( self ):
+        try:self.grid_qtimer.stop()
+        except:pass
+
     # Widget
+    def showEvent( self, event ):
+        self.Grid_Image( True )
+    def resizeEvent( self, event ):
+        self.Grid_Timer_Event()
     def enterEvent( self, event ):
         self.Camera_Grab()
     def leaveEvent( self, event ):
+        self.Grid_Unload()
         self.update()
+    def closeEvent( self, event ):
+        self.Grid_Timer_Stop()
+
     # Painter
     def paintEvent( self, event ):
         # Variables
@@ -1896,57 +2882,81 @@ class ImagineBoard_Grid( QWidget ):
         hh = self.hh
         w2 = self.w2
         h2 = self.h2
-        if ww < hh:
-            side = ww
-        else:
-            side = hh
-        if self.tw < self.th:
-            thumb = self.tw
-        else:
-            thumb = self.th
+        side = min( ww, hh )
+        thumb = min( self.gtw, self.gth )
+        state_null = self.list_qpixmap == list()
 
         # Painter
         painter = QPainter( self )
         painter.setRenderHint( QtGui.QPainter.Antialiasing, True )
 
-        # Background Hover
-        painter.setPen( QtCore.Qt.NoPen )
-        painter.setBrush( QBrush( self.color_alpha ) )
-        painter.drawRect( 0, 0, ww, hh )
-
         # Draw QPixmaps
-        for y in range( 0, len( self.grid_qpixmap ) ):
-            row = self.grid_qpixmap[y]
-            for x in range( 0, len( row ) ):
+        length = len( self.list_qpixmap )
+        for y in range( 0, self.guy ):
+            for x in range( 0, self.gux ):
+                # Index
+                geo_index = x + y * self.gux
+
+                # Geometry
+                try:
+                    geo = self.grid_geometry[y][x]
+                    px = geo[0]
+                    py = geo[1]
+                    pw = geo[2]
+                    ph = geo[3]
+                except:
+                    px = 0
+                    py = 0
+                    pw = 1
+                    ph = 1
+
                 # Clip Mask
-                px = self.tw * x
-                py = self.th * y
-                thumbnail = QRect( int( px ), int( py ), int( self.tw ), int( self.th ) )
+                thumbnail = QRect( int( px ), int( py ), int( pw+1 ), int( ph+1 ) ) # +1 clears float error
                 painter.setClipRect( thumbnail, Qt.ReplaceClip )
 
+                # Variables
+                index = self.list_start + geo_index
+                check_marker = self.state_press == True and index == self.list_index and self.operation != "color_picker"
+
                 # Render
-                qpixmap = self.grid_qpixmap[y][x]
-                broken = Display_Icon( self, "broken-preset" )
-                render = True
-                if qpixmap in [ None, False, True ]:
+                try:
+                    url = self.list_url[index]
+                    qpixmap = self.list_qpixmap[index]
+                    select = self.list_select[index]
+                    check_file = os.path.isfile( url )
+                    check_comp = zipfile.is_zipfile( url )
+                    check_kra = url.endswith( file_krita )
+                    check_dir = os.path.isdir( url )
+                    check_web = Check_Html( url )
+                    render = True
+                except:
                     render = False
                 if render == True:
-                    try:draw = qpixmap.scaled( int( self.tw + 1 ), int( self.th + 1 ), self.grid_fit, self.scale_method )
-                    except:draw = broken.scaled( int( self.tw + 1 ), int( self.th + 1 ), self.grid_fit, self.scale_method )
-                    rw = draw.width()
-                    rh = draw.height()
-                    ox = ( self.tw - rw ) * 0.5
-                    oy = ( self.th - rh ) * 0.5
-                    painter.drawPixmap( int( px + ox ), int( py + oy ), draw )
+                    # Pixmap
+                    if qpixmap != None:
+                        if check_dir and self.qpixmap_dir != None: # Directory
+                            self.Draw_Icon_Dir( painter, qpixmap, px, py, pw, ph ) # Image Inside
+                            self.Draw_QPixmap( painter, self.qpixmap_dir, px, py, pw, ph ) # Folder Icon
+                            self.Draw_Text( painter, self.qpixmap_dir, px, py, pw, ph, os.path.basename( url ) )
+                        elif check_comp and self.qpixmap_comp != None and check_kra == False: # Compressed ( ZIP )
+                            self.Draw_QPixmap( painter, qpixmap, px, py, pw, ph ) # Image Inside
+                            self.Draw_QPixmap( painter, self.qpixmap_comp, px, py, pw, ph ) # Comp Icon
+                        else: # Static + Animation + Compressed ( KRA ) + Internet
+                            self.Draw_QPixmap( painter, qpixmap, px, py, pw, ph )
+                    # Select
+                    if select == True:
+                        if check_file == True and check_comp == False:
+                            color = self.c_select
+                        else:
+                            color = self.c_lite
+                        self.Draw_Select( painter, color, px, py, pw, ph )
+                    # Circles
+                    if check_marker == True:
+                        self.Draw_Circle( painter, self.c_chrome, px, py, thumb ) # Index Circle ( white )
+                    elif check_marker == False and check_file == True and qpixmap == None:
+                        self.Draw_Circle( painter, self.c_lite, px, py, thumb ) # Unreadable Image
                 else:
-                    painter.setPen( QtCore.Qt.NoPen )
-                    if qpixmap == None or self.drop == True:
-                        painter.setBrush( QBrush( self.color_2 ) )
-                    else:
-                        painter.setBrush( QBrush( self.color_1 ) )
-                    ox = ( self.tw * 0.5 ) - ( 0.3 * thumb )
-                    oy = ( self.th * 0.5 ) - ( 0.3 * thumb )
-                    painter.drawEllipse( int( px + ox ), int( py + oy ), int( 0.6 * thumb ), int( 0.6 * thumb ) )
+                    self.Draw_Circle( painter, self.c_dark, px, py, thumb ) # Empty Space ( black )
 
         # Clean Mask
         painter.setClipping( False )
@@ -1957,39 +2967,73 @@ class ImagineBoard_Grid( QWidget ):
 
         # Drag and Drop Triangle
         if ( self.drop == True and self.drag == False ):
-            Painter_Triangle( self, painter, w2, h2, side )
+            Painter_Triangle( painter, w2, h2, side, self.c_chrome )
+    def Draw_QPixmap( self, painter, qpixmap, px, py, pw, ph ):
+        ox = ( pw - qpixmap.width() ) * 0.5
+        oy = ( ph - qpixmap.height() ) * 0.5
+        painter.drawPixmap( int( px + ox ), int( py + oy ), qpixmap )
+    def Draw_Icon_Dir( self, painter, qpixmap, px, py, pw, ph ):
+        ox = ( pw - qpixmap.width() ) * 0.5
+        oy = ( ph - qpixmap.height() ) * 0.5
+        iy = self.qpixmap_dir.height() * 0.125
+        painter.drawPixmap( int( px + ox ), int( py + oy + iy ), qpixmap )
+    def Draw_Text( self, painter, qpixmap, px, py, pw, ph, basename ):
+        # Bounding Box
+        pixw = qpixmap.width()
+        pixh = qpixmap.height()
+        ox = ( pw - pixw ) * 0.5
+        oy = ( ph - pixh ) * 0.5
+        iy = self.qpixmap_dir.height() * 0.125
+        box = QRect( int( px + ox ), int( py + oy + iy ), int( pixw ), int( pixh*0.2 ) )
+        """
+        # Highlight Under Text
+        painter.setPen( QtCore.Qt.NoPen )
+        painter.setBrush( QBrush( self.c_chrome ) )
+        painter.drawRect( box )
+        """
+        # String
+        painter.setBrush( QtCore.Qt.NoBrush )
+        painter.setPen( QPen( self.c_dark, 1, Qt.SolidLine ) )
+        qfont = QFont( "Consolas" )
+        qfont.setPointSize( 10 )
+        painter.setFont( qfont )
+        painter.drawText( box, QtCore.Qt.AlignCenter|QtCore.Qt.TextWordWrap, basename )
+        # Garbage
+        del qfont
+    def Draw_Circle( self, painter, color, px, py, thumb ):
+        painter.setPen( QtCore.Qt.NoPen )
+        painter.setBrush( QBrush( color ) )
+        side = 0.6
+        ox = ( self.gtw * 0.5 ) - ( side * thumb * 0.5 )
+        oy = ( self.gth * 0.5 ) - ( side * thumb * 0.5 )
+        painter.drawEllipse( int( px + ox ), int( py + oy ), int( side * thumb ), int( side * thumb ) )
+    def Draw_Select( self, painter, color, px, py, pw, ph ):
+        painter.setPen( QtCore.Qt.NoPen )
+        painter.setBrush( QBrush( color, Qt.Dense3Pattern ) )
+        m = 4
+        painter.drawRect( int( px ), int( py ), int( pw + m ), int( ph + m ) )
 
-class ImagineBoard_Reference( QWidget ):
+class ImagineBoard_Reference( QtWidgets.QWidget ):
     # General
-    SIGNAL_DRAG = QtCore.pyqtSignal( [ str, dict ] )
-    SIGNAL_DROP = QtCore.pyqtSignal( list )
-    # Reference
-    SIGNAL_PIN_IMAGE = QtCore.pyqtSignal( [ dict, dict ] )
-    SIGNAL_PIN_LABEL = QtCore.pyqtSignal( dict )
-    SIGNAL_PIN_SAVE = QtCore.pyqtSignal( [ QPixmap ] )
-    SIGNAL_BOARD_SAVE = QtCore.pyqtSignal( list )
-    SIGNAL_CAMERA = QtCore.pyqtSignal( [ list, float, int ] )
+    REFERENCE_DROP = QtCore.pyqtSignal( list )
     # Menu
-    SIGNAL_LOCKED = QtCore.pyqtSignal( bool )
-    SIGNAL_REFRESH = QtCore.pyqtSignal()
-    SIGNAL_FULL_SCREEN = QtCore.pyqtSignal( bool )
-    SIGNAL_LOCATION = QtCore.pyqtSignal( str )
-    SIGNAL_ANALYSE = QtCore.pyqtSignal( [ QImage ] )
-    SIGNAL_NEW_DOCUMENT = QtCore.pyqtSignal( [ str, dict ] )
-    SIGNAL_INSERT_LAYER = QtCore.pyqtSignal( [ str, dict ] )
-    SIGNAL_INSERT_REFERENCE = QtCore.pyqtSignal( [ str, dict ] )
+    REFERENCE_PIN_INSERT = QtCore.pyqtSignal( str, float, float, str, str, dict )
+    REFERENCE_FULL_SCREEN = QtCore.pyqtSignal( bool )
     # UI
-    SIGNAL_PB_VALUE = QtCore.pyqtSignal( int )
-    SIGNAL_PB_MAX = QtCore.pyqtSignal( int )
-    SIGNAL_PACK_STOP = QtCore.pyqtSignal( bool )
-    SIGNAL_LABEL_PANEL = QtCore.pyqtSignal( bool )
-    SIGNAL_LABEL_INFO = QtCore.pyqtSignal( dict )
-
+    REFERENCE_PB_VALUE = QtCore.pyqtSignal( int )
+    REFERENCE_PB_MAX = QtCore.pyqtSignal( int )
+    REFERENCE_LABEL = QtCore.pyqtSignal( str, str, int, str, str )
+    REFERENCE_CAMERA = QtCore.pyqtSignal( list, float, int, int )
+    REFERENCE_PACKER = QtCore.pyqtSignal( bool )
 
     # Init
     def __init__( self, parent ):
         super( ImagineBoard_Reference, self ).__init__( parent )
         self.Variables()
+    def sizeHint( self ):
+        return QtCore.QSize( 500,500 )
+
+    # Variables
     def Variables( self ):
         # Widget
         self.ww = 1
@@ -2003,20 +3047,24 @@ class ImagineBoard_Reference( QWidget ):
         self.ex = 0
         self.ey = 0
 
-        # State
+        # State Internal
         self.state_inside = False
-        self.state_locked = False
         self.state_maximized = False
         self.state_press = False
         self.state_select = False
         self.state_pack = False
+        # State Layout
+        self.state_lock = False
         self.state_pickcolor = False
-        self.state_label = False
+        # State Dialog
+        self.state_rebase = False
         # Interaction
         self.operation = None
+        self.dirty = False
 
         # Camera
-        self.cn = [
+        self.cam_p = [ 1, 1 ]
+        self.cam_n = [
             0.000, 0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009,
             0.010, 0.011, 0.012, 0.013, 0.014, 0.015, 0.016, 0.017, 0.018, 0.019,
             0.020, 0.021, 0.022, 0.023, 0.024, 0.025, 0.026, 0.027, 0.028, 0.029,
@@ -2141,29 +3189,25 @@ class ImagineBoard_Reference( QWidget ):
             99.0,
             100.0,
             ]
-        self.ci = self.cn.index( 1 )
-        self.cz = self.cn[self.ci] # Camera Zoom
+        self.cam_i = self.cam_n.index( 1 )
+        self.cam_z = self.cam_n[self.cam_i] # Camera Zoom
 
-        # Display
-        self.scale_method = Qt.FastTransformation
-
-        # Files
-        self.file_extension = []
-        self.file_path = ""
+        # Link
+        self.link_eo_url = str()
 
         # Pin
-        self.pin_list = []
-        self.pin_previous = []
+        self.pin_list = list()
+        self.pin_previous = list()
         self.pin_index = None
-        self.pin_path = None
+        self.pin_url = None
         self.pin_basename = None
         self.pin_node = None
         self.pin_count = 0
         self.pin_preview = None
 
         # Limit
-        self.limit_x = []
-        self.limit_y = []
+        self.limit_x = list()
+        self.limit_y = list()
 
         # Selection
         self.select_box = False
@@ -2180,44 +3224,64 @@ class ImagineBoard_Reference( QWidget ):
         self.board_w = 0
         self.board_h = 0
 
+        # Colors
+        self.c_lite = QColor( "#ffffff" )
+        self.c_dark = QColor( "#000000" )
+        self.c_chrome = QColor( "#3daee9" )
+        self.c_select = QColor( "#2980b9" )
+
+        # Color Picker
+        self.pigmento_picker = None
+        self.pigmento_sampler = None
+        self.qimage_grab = None
+        self.color_active = QColor( 0, 0, 0 )
+        self.color_previous = QColor( 0, 0, 0 )
+
+        # Clip
+        self.clip_pin = { "cstate" : False, "cl" : 0, "ct" : 0, "cr" : 1, "cb" : 1 }
+        clip_false = { "cstate" : False, "cl" : 0, "ct" : 0, "cr" : 1, "cb" : 1 }
+
+        # System
+        self.insert_original_size = False
+        self.scale_method = Qt.SmoothTransformation
+
         # Drag and Drop
         self.setAcceptDrops( True )
         self.drop = False
         self.drag = False
 
-        # Colors
-        self.color_1 = QColor( "#ffffff" )
-        self.color_2 = QColor( "#000000" )
-        self.color_shade = QColor( 0, 0, 0, 30 )
-        self.color_alpha = QColor( 0, 0, 0, 50 )
-        self.color_backdrop = QColor( 0, 0, 0, 100 )
-        self.color_blue = QColor( "#3daee9" )
-
-        # Color Picker
-        self.pigment_o = None
-        self.qimage_grab = None
-        self.color_active = QColor( 0, 0, 0 )
-        self.color_previous = QColor( 0, 0, 0 )
-
-        # Function>>
-        self.function_operation = ""
-
-        # Clip
-        self.clip_false = { "cstate" : False, "cl" : 0, "ct" : 0, "cr" : 1, "cb" : 1 }
+        # Kritarc
+        self.Kritarc_Read()
 
         # Debug Packer Points
-        # self.p = []
-    def sizeHint( self ):
-        return QtCore.QSize( 5000,5000 )
+        # self.p = list()
+    def Kritarc_Read( self ):
+        # EO
+        self.link_eo_state = True
+        self.link_eo_archive = False
+        self.link_eo_access = None # TextIOWrapper
+        self.link_eo_url = str() # EO file url
+        # KRA
+        self.link_kra_state = False
+        self.link_kra_archive = False
+        self.link_kra_access = None # Active Document Krita Object
+        self.link_kra_name = None # FileName
+        # Read
+        self.link_eo_url = Kritarc_Read( DOCKER_NAME, "link_eo_url", self.link_eo_url, str )
+        self.link_eo_state = Kritarc_Read( DOCKER_NAME, "link_eo_state", self.link_eo_state, eval )
+        self.link_kra_state = Kritarc_Read( DOCKER_NAME, "link_kra_state", self.link_kra_state, eval )
 
-    # Relay
-    def Set_File_Extension( self, file_extension ):
-        self.file_extension = file_extension
-    def Set_Pigment_O( self, boolean ):
-        self.pigment_o = boolean
-    def Set_Theme( self, color_1, color_2 ):
-        self.color_1 = color_1
-        self.color_2 = color_2
+    # Relay System
+    def Set_Pigment_O( self, pigmento_picker, pigmento_sampler ):
+        self.pigmento_picker = pigmento_picker
+        self.pigmento_sampler = pigmento_sampler
+    def Set_Theme( self, c_lite, c_dark, c_chrome, c_select ):
+        self.c_lite = QColor( c_lite )
+        self.c_dark = QColor( c_dark )
+        self.c_chrome = QColor( c_chrome )
+        self.c_select = QColor( c_select )
+        Style_Icon( self )
+        self.update()
     def Set_Size( self, ww, hh, state_maximized ):
         if self.state_pack == False:
             # Count
@@ -2238,7 +3302,217 @@ class ImagineBoard_Reference( QWidget ):
             self.Board_Limit( "DRAW" )
             # Update
             self.resize( ww, hh )
-    def Set_Camera( self, position, zoom ):
+    # Relay Layout
+    def Set_Lock( self, boolean ):
+        self.state_lock = boolean
+        self.update()
+    def Set_ColorPicker( self, boolean ):
+        self.state_pickcolor = boolean 
+        self.update()
+    # Relay Dialog
+    def Set_Insert_Original_Size( self, boolean ):
+        self.insert_original_size = boolean
+        self.update()
+    def Set_Rebase( self, boolean ):
+        self.state_rebase = boolean
+        self.update()
+    def Set_Scale_Method( self, scale_method ):
+        self.scale_method = scale_method
+        self.update()
+    # Relay Board
+    def Set_Link_Document( self, link_kra_access ):
+        self.link_kra_access = link_kra_access
+        self.link_kra_name = str()
+        if link_kra_access != None:
+            file_name = self.link_kra_access.fileName()
+            self.link_kra_name = os.path.basename( file_name )
+        self.update()
+    # Relay Label
+    def Set_Label_Text( self, text ):
+        if self.state_lock == False:
+            lista = self.Label_List()
+            for i in lista:
+                self.pin_list[i]["text"] = text
+            self.update()
+    def Set_Label_Font( self, font ):
+        if self.state_lock == False:
+            lista = self.Label_List()
+            for i in lista:
+                self.pin_list[i]["font"] = font
+            self.update()
+    def Set_Label_Letter( self, letter ):
+        if self.state_lock == False:
+            lista = self.Label_List()
+            for i in lista:
+                self.pin_list[i]["letter"] = letter
+            self.update()
+    def Set_Label_Pen( self, pen ):
+        if self.state_lock == False:
+            lista = self.Label_List()
+            for i in lista:
+                self.pin_list[i]["pen"] = pen
+            self.update()
+    def Set_Label_Bg( self, bg ):
+        if self.state_lock == False:
+            lista = self.Label_List()
+            for i in lista:
+                self.pin_list[i]["bg"] = bg
+            self.update()
+
+    # Request Board
+    def Get_Pin( self ):
+        return self.pin_list
+    def Get_Count( self ):
+        return self.pin_count
+    def Get_EO_State( self ):
+        return self.link_eo_state
+    def Get_KRA_State( self ):
+        return self.link_kra_state
+    def Get_File_Name( self ):
+        file_name = str()
+        if   self.link_eo_state  == True:   file_name = os.path.basename( self.link_eo_url )
+        elif self.link_kra_state == True:   file_name = self.link_kra_name
+        return file_name
+    # Request Label
+    def Get_Label_Infomation( self ):
+        lista = self.Label_List()
+        if len( lista ) > 0:
+            index = lista[-1]
+            info = {
+                "text"   : self.pin_list[index]["text"],
+                "font"   : self.pin_list[index]["font"],
+                "letter" : self.pin_list[index]["letter"],
+                "pen"    : self.pin_list[index]["pen"],
+                "bg"     : self.pin_list[index]["bg"],
+                }
+        else:
+            info = None
+        return info
+
+    # Boards
+    def Board_Load( self, lista ):
+        # Insert Pins
+        self.pin_list = list()
+        self.pin_count = len( lista )
+        for i in range( 0, self.pin_count ):
+            pin = lista[i]
+            self.pin_list.append( pin )
+        # Update
+        self.Board_Update()
+    def Board_Refresh( self ):
+        if   self.link_eo_state  == True:   self.EO_Load()
+        elif self.link_kra_state == True:   self.KRA_Read()
+    def Board_Save( self ):
+        if   self.link_eo_state  == True:   self.EO_Save()
+        elif self.link_kra_state == True:   self.KRA_Write( False )
+    def Board_Fit( self ):
+        # Variables
+        self.pin_count = len( self.pin_list )
+        if self.pin_count > 0:
+            # Variables
+            nx, ny = self.Point_Location( 0, 0 )
+            mx, my = self.Point_Location( self.ww, self.hh )
+            nmx = mx - nx
+            nmy = my - ny
+            # Board
+            board_l, board_r, board_t, board_b, board_w, board_h = self.Board_Limit( "PIN" )
+            # Move to Neutral
+            for i in range( 0, self.pin_count ):
+                px = nx + self.pin_list[i]["bl"] - board_l
+                py = ny + self.pin_list[i]["bt"] - board_t
+                self.Move_Point( self.pin_list, i, px, py )
+            # Board
+            board_l, board_r, board_t, board_b, board_w, board_h = self.Board_Limit( "PIN" )
+            # Move to Center
+            for i in range( 0, self.pin_count ):
+                px = self.w2 + ( self.pin_list[i]["bl"] - ( board_l + board_w * 0.5 ) )
+                py = self.h2 + ( self.pin_list[i]["bt"] - ( board_t + board_h * 0.5 ) )
+                self.Move_Point( self.pin_list, i, px, py )
+            # Camera
+            self.Camera_Zoom_Fit()
+        # Update
+        self.Pin_Previous()
+        self.Board_Limit( "DRAW" )
+        self.update()
+    def Board_Limit( self, mode ):
+        # Variables
+        self.pin_count = len( self.pin_list )
+        board_horz = list()
+        board_vert = list()
+        # Cycle
+        for i in range( 0, self.pin_count ):
+            # Read
+            if mode == "PIN":
+                bl = self.pin_list[i]["bl"]
+                br = self.pin_list[i]["br"]
+                bt = self.pin_list[i]["bt"]
+                bb = self.pin_list[i]["bb"]
+            if mode == "DRAW":
+                bx, by, bl, br, bt, bb, bw, bh = self.Pin_Draw_Box( i )
+            # Board Limit
+            board_horz.extend( [ bl, br ] )
+            board_vert.extend( [ bt, bb ] )
+        if ( self.pin_count > 0 ):
+            board_l = min( board_horz )
+            board_r = max( board_horz )
+            board_t = min( board_vert )
+            board_b = max( board_vert )
+            board_w = board_r - board_l
+            board_h = board_b - board_t
+        else:
+            board_l = 0
+            board_r = 0
+            board_t = 0
+            board_b = 0
+            board_w = 0
+            board_h = 0
+        # Return
+        if mode == "PIN":
+            return board_l, board_r, board_t, board_b, board_w, board_h
+        if mode == "DRAW":
+            self.board_l = board_l
+            self.board_r = board_r
+            self.board_t = board_t
+            self.board_b = board_b
+            self.board_w = board_w
+            self.board_h = board_h
+    def Board_Render( self ):
+        for i in range( 0, self.pin_count ):
+            # Read
+            render = self.pin_list[i]["render"]
+            # Calculations
+            dx, dy, dl, dr, dt, db, dw, dh = self.Pin_Draw_Box( i )
+            draw = not ( ( dl > self.ww ) or ( dr < 0 ) or ( dt > self.hh ) or ( db < 0 ) )
+            # Write
+            self.pin_list[i]["render"] = draw
+            # Update Draw Information
+            if ( render == False and draw == True ):
+                self.Pin_Draw_QPixmap( self.pin_list, i )
+    def Board_Focus( self ):
+        for i in range( 0, self.pin_count ):
+            if self.pin_list[i]["render"] != None:
+                self.Pin_Draw_QPixmap( self.pin_list, i )
+    def Board_Empty( self ):
+        self.pin_list.clear()
+        self.Board_Update()
+    def Board_Update( self ):
+        # Pin
+        self.pin_count = len( self.pin_list )
+        self.Pin_Previous()
+        # Camera
+        self.Camera_Emit()
+        # Board
+        self.Board_Limit( "DRAW" )
+        self.Board_Render()
+        if self.dirty == True:
+            self.dirty = False
+            self.Board_Save()
+        # Update
+        self.update()
+        self.Camera_Grab()
+
+    # Camera
+    def Camera_Load( self, position, zoom ):
         # Position
         self.Pin_Previous()
         board_l, board_r, board_t, board_b, board_w, board_h = self.Board_Limit( "PIN" )
@@ -2250,69 +3524,96 @@ class ImagineBoard_Reference( QWidget ):
         dy = cy - py
         for i in range( 0, self.pin_count ):
             self.Move_Transform( self.pin_previous, i, dx, dy )
-
         # Zoom
         index = 0
-        for i in range( 0, len( self.cn ) ):
-            if ( zoom >= self.cn[i] ) and ( zoom < self.cn[i+1] ):
+        for i in range( 0, len( self.cam_n ) ):
+            if ( zoom >= self.cam_n[i] ) and ( zoom < self.cam_n[i+1] ):
                 index = i
                 break
-        self.ci = index
-        self.cz = self.cn[index]
-
+        self.cam_i = index
+        self.cam_z = self.cam_n[index]
         # Update
         self.Board_Update()
-    def Set_Scale_Method( self, scale_method ):
-        self.scale_method = scale_method
+    def Camera_Reset( self ):
+        self.cam_i = self.cam_n.index( 1 )
+        self.cam_z = self.cam_n[self.cam_i] # Camera Zoom
+    def Camera_Position( self ):
+        px = 1
+        py = 1
+        if ( self.board_w != 0 or self.board_h != 0 ):
+            px = ( self.w2 - self.board_l ) / self.board_w
+            py = ( self.h2 - self.board_t ) / self.board_h
+        self.cam_p = [ px, py ]
+    def Camera_Move( self, ex, ey ):
+        dx, dy = self.Point_Deltas( ex, ey )
+        for i in range( 0, self.pin_count ):
+            self.Move_Transform( self.pin_previous, i, dx, dy )
+    def Camera_Scale( self, ex, ey ):
+        dy = -( ( ey - self.oy ) / 10 )
+        if abs( dy ) >= 1:
+            self.oy = ey
+            self.Camera_Zoom_Step( dy )
+    def Camera_Zoom_Step( self, step ):
+        self.cam_i = Limit_Range( self.cam_i + int( step ), 0, len( self.cam_n ) - 1 )
+        self.cam_z = self.cam_n[self.cam_i]
+        self.Camera_Emit()
         self.update()
-    def Set_Stop_Cycle( self ):
-        try:self.worker_packer.STOP()
-        except:pass
-    def Set_File_Path( self, path ):
-        if path not in [ "", ".", None]:
-            name = ( os.path.basename( path ) ).split( "." )[0]
-            file_path = f" [ { name } ]"
-        else:
-            file_path = ""
-        self.file_path = file_path
-        self.update()
-    def Set_Function( self, function_operation ):
-        self.function_operation = function_operation
-        self.update()
-    def Set_Locked( self, state_locked ):
-        self.state_locked = state_locked
-        self.update()
+    def Camera_Zoom_Fit( self ):
+        # Board
+        bl, br, bt, bb, bw, bh = self.Board_Limit( "PIN" )
+        # Widget
+        pl = 0
+        pt = 0
+        pr = self.ww
+        pb = self.hh
+        w2 = pr * 0.5
+        h2 = pb * 0.5
 
-    # Points
-    def Point_Deltas( self, ex, ey ):
-        try:
-            dx = ( ex - self.ox ) / self.cz
-            dy = ( ey - self.oy ) / self.cz
-        except:
-            dx = 0
-            dy = 0
-        return dx, dy
-    def Point_Location( self, ex, ey ):
-        try:
-            px = self.w2 + ( ex - self.w2 ) / self.cz
-            py = self.h2 + ( ey - self.h2 ) / self.cz
-        except:
-            px = self.w2
-            py = self.h2
-        return px, py
+        # Ratio
+        cl = ( pl - w2 ) / ( bl - w2 )
+        cr = ( pr - w2 ) / ( br - w2 )
+        ct = ( pt - h2 ) / ( bt - h2 )
+        cb = ( pb - h2 ) / ( bb - h2 )
+        # Zoom
+        zoom = list()
+        if cl > 0:zoom.append( cl )
+        if cr > 0:zoom.append( cr )
+        if ct > 0:zoom.append( ct )
+        if cb > 0:zoom.append( cb )
+        zoom = min( zoom )
+
+        # Index
+        index = self.cam_n.index( 1 )
+        for i in range( 0, len( self.cam_n ) ):
+            if ( zoom >= self.cam_n[i] and zoom < self.cam_n[i+1] ):
+                index = i
+                break
+        # Apply
+        self.cam_i = index
+        self.cam_z = self.cam_n[self.cam_i]
+        self.Camera_Emit()
+    def Camera_Signal( self ):
+        self.Camera_Position()
+        self.REFERENCE_CAMERA.emit( self.cam_p, self.cam_z, self.select_count, self.pin_count )
+    def Camera_Emit( self ):
+        self.Camera_Signal()
+        for i in range( 0, self.pin_count ):
+            self.Pin_Draw_QPixmap( self.pin_list, i )
+    def Camera_Grab( self ):
+        try:self.qimage_grab = self.grab().toImage()
+        except:pass
 
     # Pin
     def Pin_Insert( self, pin ):
         # Pin
         self.pin_list.append( pin )
-        self.pin_count = len( self.pin_list )
+        self.pin_count = self.pin_count + 1
         # Update
         self.update()
     def Pin_URL( self, bx, by ):
-        url, ok = QInputDialog.getText( self, "Insert Pin", "URL", QLineEdit.Normal, "" )
+        url, ok = QInputDialog.getText( self, "Link Image", "URL", QLineEdit.Normal, "" )
         if ok and url != "":
-            pin = { "bx" : bx, "by" : by, "image_path" : url }
-            self.SIGNAL_PIN_IMAGE.emit( pin, self.clip_false )
+            self.REFERENCE_PIN_INSERT.emit( "image", bx, by, None, url, clip_false )
     def Pin_Update( self ):
         for i in range( 0, self.pin_count ):
             self.pin_list[i]["index"] = i
@@ -2320,7 +3621,7 @@ class ImagineBoard_Reference( QWidget ):
         # Variables
         index = None
         self.pin_index = None
-        self.pin_path = None
+        self.pin_url = None
         self.pin_basename = None
         self.pin_node = None
         self.pin_count = len( self.pin_list )
@@ -2350,11 +3651,11 @@ class ImagineBoard_Reference( QWidget ):
             self.pin_index = pin_index
             self.pin_node = self.Pin_Node( self.pin_index )
             if self.pin_list[pin_index]["tipo"] == "image":
-                self.pin_path = self.pin_list[pin_index]["path"]
-                try:self.pin_basename = str( os.path.basename( self.pin_path ) ) # local
+                self.pin_url = self.pin_list[pin_index]["url"]
+                try:self.pin_basename = str( os.path.basename( self.pin_url ) ) # local
                 except:self.pin_basename = None # web
             else:
-                self.pin_path = None
+                self.pin_url = None
                 self.pin_basename = None
     def Pin_Active( self, index ):
         for i in range( 0, self.pin_count ):
@@ -2377,7 +3678,7 @@ class ImagineBoard_Reference( QWidget ):
             dx, dy, dl, dr, dt, db, dw, dh = self.Pin_Draw_Box( index )
 
             # List
-            nodes = []
+            nodes = list()
             nodes.append( [ Trig_2D_Points_Distance( dl, dt, self.ox, self.oy ), 1 ] ) # top left
             nodes.append( [ Trig_2D_Points_Distance( dr, dt, self.ox, self.oy ), 3 ] ) # top right
             nodes.append( [ Trig_2D_Points_Distance( dl, db, self.ox, self.oy ), 7 ] ) # bot left
@@ -2420,9 +3721,9 @@ class ImagineBoard_Reference( QWidget ):
         self.limit_y = list( set( set_limit_y ) )
     def Pin_Previous( self ):
         if self.pin_count > 0:
-            pin_previous = []
+            pin_previous = list()
             for i in range( 0, self.pin_count ):
-                dicta = {
+                previous = {
                     # Transform
                     "trz" : self.pin_list[i]["trz"],
                     "tsk" : self.pin_list[i]["tsk"],
@@ -2438,7 +3739,7 @@ class ImagineBoard_Reference( QWidget ):
                     "bw" : self.pin_list[i]["bw"],
                     "bh" : self.pin_list[i]["bh"],
                     }
-                pin_previous.append( dicta )
+                pin_previous.append( previous )
             self.pin_previous = pin_previous
     def Pin_Preview( self, index ):
         # Logic
@@ -2472,12 +3773,12 @@ class ImagineBoard_Reference( QWidget ):
             bw = self.pin_list[index]["bw"]
             bh = self.pin_list[index]["bh"]
             # Transform
-            dx = self.w2 + ( bx - self.w2 ) * self.cz
-            dy = self.h2 + ( by - self.h2 ) * self.cz
-            dl = self.w2 + ( bl - self.w2 ) * self.cz
-            dr = self.w2 + ( br - self.w2 ) * self.cz
-            dt = self.h2 + ( bt - self.h2 ) * self.cz
-            db = self.h2 + ( bb - self.h2 ) * self.cz
+            dx = self.w2 + ( bx - self.w2 ) * self.cam_z
+            dy = self.h2 + ( by - self.h2 ) * self.cam_z
+            dl = self.w2 + ( bl - self.w2 ) * self.cam_z
+            dr = self.w2 + ( br - self.w2 ) * self.cam_z
+            dt = self.h2 + ( bt - self.h2 ) * self.cam_z
+            db = self.h2 + ( bb - self.h2 ) * self.cam_z
             dw = dr - dl
             dh = db - dt
             # Return
@@ -2496,15 +3797,15 @@ class ImagineBoard_Reference( QWidget ):
             efy = lista[index]["efy"]
             qpixmap = lista[index]["qpixmap"]
             # Pixmap
-            if qpixmap != None:
+            if qpixmap == None:
+                lista[index]["qpixmap"] = None
+                lista[index]["draw"] = None
+            else:
                 draw = self.Edit_QPixmap( qpixmap, egs, efx, efy )
                 draw = self.Scale_QPixmap( draw, tsw, tsh )
                 draw = self.Rotate_QPixmap( draw, trz )
                 lista[index]["draw"] = draw
                 del draw
-            else:
-                lista[index]["qpixmap"] = None
-                lista[index]["draw"] = None
             # Garbage
             del qpixmap
 
@@ -2518,8 +3819,8 @@ class ImagineBoard_Reference( QWidget ):
         draw = QPixmap().fromImage( source )
         return draw
     def Scale_QPixmap( self, source, width, height ):
-        w = width * self.cz
-        h = height * self.cz
+        w = width * self.cam_z
+        h = height * self.cam_z
         if( self.state_inside == False and self.scale_method == True ):
             draw = source.scaled( int( w ), int( h ), Qt.IgnoreAspectRatio, Qt.SmoothTransformation )
         else:
@@ -2533,73 +3834,6 @@ class ImagineBoard_Reference( QWidget ):
             rotation = QTransform().rotate( angle, Qt.ZAxis )
             draw = source.transformed( rotation )
         return draw
-
-    # Label ( Text )
-    def Label_Insert( self, event ):
-        pos = event.pos()
-        bx, by = self.Point_Location( pos.x(), pos.y() )
-        pin = {
-            "bx" : bx,
-            "by" : by,
-            "cstate" : None,
-            }
-        self.SIGNAL_PIN_LABEL.emit( pin )
-    def Label_List( self ):
-        lista = []
-        for i in range( 0, self.pin_count ):
-            if self.pin_list[i]["select"] == True:
-                lista.append( i )
-        return lista
-    def Label_Panel( self, index ):
-        info = {
-            "text"   : self.pin_list[index]["text"],
-            "font"   : self.pin_list[index]["font"],
-            "letter" : self.pin_list[index]["letter"],
-            "pen"    : self.pin_list[index]["pen"],
-            "bg"     : self.pin_list[index]["bg"],
-            }
-        self.SIGNAL_LABEL_INFO.emit( info )
-    # Get Label
-    def Get_Label_Infomation( self ):
-        lista = self.Label_List()
-        if len( lista ) > 0:
-            index = lista[-1]
-            info = {
-                "text"   : self.pin_list[index]["text"],
-                "font"   : self.pin_list[index]["font"],
-                "letter" : self.pin_list[index]["letter"],
-                "pen"    : self.pin_list[index]["pen"],
-                "bg"     : self.pin_list[index]["bg"],
-                }
-        else:
-            info = None
-        return info
-    # Set Label
-    def Set_Label_Text( self, text ):
-        lista = self.Label_List()
-        for i in lista:
-            self.pin_list[i]["text"] = text
-        self.update()
-    def Set_Label_Font( self, font ):
-        lista = self.Label_List()
-        for i in lista:
-            self.pin_list[i]["font"] = font
-        self.update()
-    def Set_Label_Letter( self, letter ):
-        lista = self.Label_List()
-        for i in lista:
-            self.pin_list[i]["letter"] = letter
-        self.update()
-    def Set_Label_Pen( self, pen ):
-        lista = self.Label_List()
-        for i in lista:
-            self.pin_list[i]["pen"] = pen
-        self.update()
-    def Set_Label_Bg( self, bg ):
-        lista = self.Label_List()
-        for i in lista:
-            self.pin_list[i]["bg"] = bg
-        self.update()
 
     # Pin Transforms
     def Pin_Transform( self, ex, ey, node ):
@@ -2622,13 +3856,12 @@ class ImagineBoard_Reference( QWidget ):
             if self.pin_list[self.pin_index]["tipo"] == "image":
                 dx = ( ex - self.ox )
                 self.Rotate_Pin( dx )
-
     # Move
     def Move_Pin( self, dx, dy, boolean ):
         # Variabels
         sx = 0
         sy = 0
-        snap_dist = 10 / self.cz
+        snap_dist = 10 / self.cam_z
 
         # Preview Move
         n_bx = self.pin_previous[self.pin_index]["bx"] + dx
@@ -2695,11 +3928,27 @@ class ImagineBoard_Reference( QWidget ):
         lista[index]["br"] = px + bw
         lista[index]["bt"] = py
         lista[index]["bb"] = py + bh
-
+    # Points
+    def Point_Deltas( self, ex, ey ):
+        try:
+            dx = ( ex - self.ox ) / self.cam_z
+            dy = ( ey - self.oy ) / self.cam_z
+        except:
+            dx = 0
+            dy = 0
+        return dx, dy
+    def Point_Location( self, ex, ey ):
+        try:
+            px = self.w2 + ( ex - self.w2 ) / self.cam_z
+            py = self.h2 + ( ey - self.h2 ) / self.cam_z
+        except:
+            px = self.w2
+            py = self.h2
+        return px, py
     # Scale
     def Scale_Pin( self, px, py, node ):
         # Variables
-        snap_dist = 20 / self.cz
+        snap_dist = 20 / self.cam_z
 
         # Read
         tipo = self.pin_list[self.pin_index]["tipo"]
@@ -2753,7 +4002,7 @@ class ImagineBoard_Reference( QWidget ):
             ay = bb
 
         # Line intersection
-        dist = []
+        dist = list()
         for x in range( 0, len( self.limit_x ) ):
             try:
                 lx = self.limit_x[x]
@@ -2944,7 +4193,7 @@ class ImagineBoard_Reference( QWidget ):
             self.pin_list[index]["area"] = fw * fh
             self.pin_list[index]["perimeter"] = 2 * fw + 2 * fh
             self.pin_list[index]["ratio"] = fw / fh
-    def Scale_Factor( self, previous, index, nx, ny, factor ):
+    def Scale_Reset( self, previous, index ):
         # Read
         trz = previous[index]["trz"]
         tsk = previous[index]["tsk"]
@@ -2959,25 +4208,33 @@ class ImagineBoard_Reference( QWidget ):
         bw = previous[index]["bw"]
         bh = previous[index]["bh"]
 
+        # Variables
+        side = 200
+        # Calculations
+        if bw >= bh:
+            factor = side / bh
+            n_bw = int( bw * factor )
+            n_bh = side
+        else:
+            factor = side / bw
+            n_bw = side
+            n_bh = int( bh * factor )
+        dw = bw * 0.5
+        dh = bh * 0.5
+
         # Calculation
         n_tsk = tsk * factor
         n_tsw = tsw * factor
         n_tsh = tsh * factor
-        n_bx = nx + ( bx - nx ) * factor
-        n_by = ny + ( by - ny ) * factor
-        n_bl = nx + ( bl - nx ) * factor
-        n_br = nx + ( br - nx ) * factor
-        n_bt = ny + ( bt - ny ) * factor
-        n_bb = ny + ( bb - ny ) * factor
-        n_bw = n_br - n_bl
-        n_bh = n_bb - n_bt
+        n_bl = bx - dw
+        n_br = n_bl + n_bw
+        n_bt = by - dh
+        n_bb = n_bt + n_bh
 
         # Write
         self.pin_list[index]["tsk"] = n_tsk
         self.pin_list[index]["tsw"] = n_tsw
         self.pin_list[index]["tsh"] = n_tsh
-        self.pin_list[index]["bx"] = n_bx
-        self.pin_list[index]["by"] = n_by
         self.pin_list[index]["bl"] = n_bl
         self.pin_list[index]["br"] = n_br
         self.pin_list[index]["bt"] = n_bt
@@ -2991,7 +4248,7 @@ class ImagineBoard_Reference( QWidget ):
         # dx, dy =  delta amount
 
         # Variabels
-        snap_dist = 10 / self.cz
+        snap_dist = 10 / self.cam_z
 
         # Read
         bx = previous[index]["bx"]
@@ -3127,7 +4384,6 @@ class ImagineBoard_Reference( QWidget ):
             self.pin_list[index]["area"] = w * h
             self.pin_list[index]["perimeter"] = 2 * w + 2 * h
             self.pin_list[index]["ratio"] = w / h
-
     # Rotate
     def Rotate_Pin( self, dx ):
         # Angle
@@ -3194,18 +4450,6 @@ class ImagineBoard_Reference( QWidget ):
         self.pin_list[index]["perimeter"] = 2 * n_bw + 2 * n_bh
         self.pin_list[index]["ratio"] = n_bw / n_bh
 
-    # Edit
-    def Edit_Pin( self, egs, efx, efy ):
-        for i in range( 0, self.pin_count ):
-            valid = self.pin_list[i]["active"] == True or self.pin_list[i]["select"] == True
-            if valid == True:
-                # Write
-                self.pin_list[i]["egs"] = egs
-                self.pin_list[i]["efx"] = efx
-                self.pin_list[i]["efy"] = efy
-                # QPixmaps
-                self.Pin_Draw_QPixmap( self.pin_list, i )
-
     # Selection
     def Selection_Click( self, index ):
         if index != None:
@@ -3242,13 +4486,11 @@ class ImagineBoard_Reference( QWidget ):
         # Variables
         self.state_select = False
         self.select_count = 0
-
         # Cycle
         for i in range( 0, self.pin_count ):
             if self.pin_list[i]["select"] == True:
                 self.state_select = True
                 self.select_count += 1
-
         # Label
         lista = self.Label_List()
         if len( lista ) > 0:
@@ -3284,351 +4526,42 @@ class ImagineBoard_Reference( QWidget ):
             self.pin_list[i]["select"] = False
             self.pin_list[i]["active"] = False
 
-    # Boards
-    def Board_Insert( self, lista ):
-        # Insert Pins
-        self.pin_list.clear()
-        self.pin_count = len( lista )
-        for i in range( 0, self.pin_count ):
-            pin = lista[i]
-            self.pin_list.append( pin )
-        # Update
-        self.Board_Update()
-    def Board_Fit( self ):
-        # Variables
-        self.pin_count = len( self.pin_list )
-        if self.pin_count > 0:
-            # Variables
-            nx, ny = self.Point_Location( 0, 0 )
-            mx, my = self.Point_Location( self.ww, self.hh )
-            nmx = mx - nx
-            nmy = my - ny
-            # Board
-            board_l, board_r, board_t, board_b, board_w, board_h = self.Board_Limit( "PIN" )
-            # Move to Neutral
-            for i in range( 0, self.pin_count ):
-                px = nx + self.pin_list[i]["bl"] - board_l
-                py = ny + self.pin_list[i]["bt"] - board_t
-                self.Move_Point( self.pin_list, i, px, py )
-
-            # Board
-            board_l, board_r, board_t, board_b, board_w, board_h = self.Board_Limit( "PIN" )
-            # Move to Center
-            for i in range( 0, self.pin_count ):
-                px = self.w2 + ( self.pin_list[i]["bl"] - ( board_l + board_w * 0.5 ) )
-                py = self.h2 + ( self.pin_list[i]["bt"] - ( board_t + board_h * 0.5 ) )
-                self.Move_Point( self.pin_list, i, px, py )
-
-            self.Camera_Zoom_Fit()
-
-        # Update
-        self.Pin_Previous()
-        self.Board_Limit( "DRAW" )
-        self.update()
-    def Board_Clear( self ):
-        self.pin_list.clear()
-        self.Board_Update()
-    def Board_Update( self ):
-        # Pin
-        self.pin_count = len( self.pin_list )
-        self.Pin_Previous()
-        # Camera
-        self.Camera_Emit()
-        # Board
-        self.Board_Limit( "DRAW" )
-        self.Board_Render()
-        self.Board_Save()
-        # Update
-        self.update()
-        self.Camera_Grab()
-    def Board_Limit( self, mode ):
-        # Variables
-        self.pin_count = len( self.pin_list )
-        board_horz = []
-        board_vert = []
-        # Cycle
-        for i in range( 0, self.pin_count ):
-            # Read
-            if mode == "PIN":
-                bl = self.pin_list[i]["bl"]
-                br = self.pin_list[i]["br"]
-                bt = self.pin_list[i]["bt"]
-                bb = self.pin_list[i]["bb"]
-            if mode == "DRAW":
-                bx, by, bl, br, bt, bb, bw, bh = self.Pin_Draw_Box( i )
-            # Board Limit
-            board_horz.extend( [ bl, br ] )
-            board_vert.extend( [ bt, bb ] )
-        if ( self.pin_count > 0 ):
-            board_l = min( board_horz )
-            board_r = max( board_horz )
-            board_t = min( board_vert )
-            board_b = max( board_vert )
-            board_w = board_r - board_l
-            board_h = board_b - board_t
+    # Clip
+    def Clip_Pin( self ):
+        if self.pin_index == None:
+            pin_cstate = False
+            pin_cl = 0
+            pin_ct = 0
+            pin_cw = 1
+            pin_ch = 1
         else:
-            board_l = 0
-            board_r = 0
-            board_t = 0
-            board_b = 0
-            board_w = 0
-            board_h = 0
-        # Return
-        if mode == "PIN":
-            return board_l, board_r, board_t, board_b, board_w, board_h
-        if mode == "DRAW":
-            self.board_l = board_l
-            self.board_r = board_r
-            self.board_t = board_t
-            self.board_b = board_b
-            self.board_w = board_w
-            self.board_h = board_h
-    def Board_Render( self ):
+            pin = self.pin_list[self.pin_index]
+            pin_cstate = pin["cstate"]
+            pin_cl = pin["cl"]
+            pin_ct = pin["ct"]
+            pin_cw = pin["cw"]
+            pin_ch = pin["ch"]
+        self.clip_pin = { "cstate" : pin_cstate, "cl": pin_cl, "ct": pin_ct, "cw": pin_cw, "ch": pin_ch }
+
+    # Label ( Text )
+    def Label_Insert( self, event ):
+        pos = event.pos()
+        bx, by = self.Point_Location( pos.x(), pos.y() )
+        self.REFERENCE_PIN_INSERT.emit( "label", bx, by, "Text", None, clip_false )
+    def Label_List( self ):
+        lista = list()
         for i in range( 0, self.pin_count ):
-            # Read
-            render = self.pin_list[i]["render"]
-            # Calculations
-            dx, dy, dl, dr, dt, db, dw, dh = self.Pin_Draw_Box( i )
-            draw = not ( ( dl > self.ww ) or ( dr < 0 ) or ( dt > self.hh ) or ( db < 0 ) )
-            # Write
-            self.pin_list[i]["render"] = draw
-            # Update Draw Information
-            if ( render == False and draw == True ):
-                self.Pin_Draw_QPixmap( self.pin_list, i )
-    def Board_Focus( self ):
-        for i in range( 0, self.pin_count ):
-            if self.pin_list[i]["render"] != None:
-                self.Pin_Draw_QPixmap( self.pin_list, i )
-    def Board_Save( self ):
-        self.SIGNAL_BOARD_SAVE.emit( self.pin_list )
-    def Board_Locked( self, boolean ):
-        self.state_locked = boolean
-        self.SIGNAL_LOCKED.emit( self.state_locked )
-
-    # Reset
-    def Reset_Rotation( self, lista ):
-        self.Pin_Previous()
-        for item in lista:
-            index = item["index"]
-            angle = -self.pin_list[index]["trz"]
-            self.Rotate_Transform( self.pin_previous, index, angle )
-            self.Pin_Draw_QPixmap( self.pin_list, index )
-    def Reset_Scale( self, lista ):
-        # Variables
-        side = 200
-        # Scaling
-        self.Pin_Previous()
-        for pin in lista:
-            # Read
-            index = pin["index"]
-            nx = pin["bl"]
-            ny = pin["bt"]
-            width = pin["bw"]
-            height = pin["bh"]
-            # Calculations
-            if width >= height:
-                factor = side / height
-            else:
-                factor = side / width
-            # Scale
-            self.Scale_Factor( self.pin_previous, index, nx, ny, factor )
-            self.Pin_Draw_QPixmap( self.pin_list, index )
-
-    # Relative
-    def Relative_Rebase( self, lista ):
-        # Variables
-        count = self.pin_count
-        suggestion = ""
-        for item in lista:
-            path = item["path"]
-            if path != None:
-                suggestion = os.path.dirname( path )
-                break
-        previous_path = lista[0]["path"]
-
-        # Select Directory
-        file_dialog = QFileDialog( QWidget( self ) )
-        file_dialog.setFileMode( QFileDialog.DirectoryOnly )
-        directory = file_dialog.getExistingDirectory( self, f"Select Directory - previous_path = { previous_path }", suggestion )
-        if directory not in [ "", "." ]:
-            qdir = QDir( directory )
-            qdir.setSorting( QDir.LocaleAware )
-            qdir.setFilter( QDir.Files | QDir.NoSymLinks | QDir.NoDotAndDotDot )
-            qdir.setNameFilters( self.file_extension )
-            files = qdir.entryInfoList()
-        else:
-            files = []
-
-        # Search Cycles
-        path_old = []
-        for i in range( 0, self.pin_count ):
-            item = self.pin_list[i]
-            path = item["path"]
-            qpixmap = QPixmap( path )
-            if qpixmap.isNull() == False:
-                item["qpixmap"] = qpixmap
-                item["draw"] = self.Pin_Draw_QPixmap( self.pin_list, i )
-            else:
-                item["qpixmap"] = None
-                item["draw"] = None
-            path_old.append( path )
-        for item in lista:
-            tipo = item["tipo"]
-            bx = item["bx"]
-            by = item["by"]
-            cstate = item["cstate"]
-            cl = item["cl"]
-            ct = item["ct"]
-            cw = item["cw"]
-            ch = item["ch"]
-            path = item["path"]
-            web = item["web"]
-            qpixmap = item["qpixmap"]
-            if path != None:
-                basename = os.path.basename( path )
-            elif web != None:
-                basename = os.path.split( urllib.parse.urlparse( web ).path )[1]
-            else:
-                basename = None
-            if ( tipo == "image" and qpixmap == None ):
-                for f in files:
-                    fn = f.fileName() # basename
-                    fp = os.path.abspath( f.filePath() ) # path
-                    if basename == fn and fp not in path_old:
-                        pin = { "bx" : bx + 20, "by" : by + 20, "image_path" : fp }
-                        clip = { "cstate":cstate, "cl":cl, "ct":ct, "cw":cw, "ch":ch }
-                        self.SIGNAL_PIN_IMAGE.emit( pin, clip )
-                        break
-            # Selection
-            if len( self.pin_list ) > count:
-                self.Selection_Clear()
-                for i in range( count, len( self.pin_list ) ):
-                    self.pin_list[i]["select"] = True
-                self.Selection_Verify()
-        # Update
-        self.Board_Update()
-        self.Board_Focus()
-    def Relative_Delete( self, lista ):
-        for i in range( 0, len( lista ) ):
-            self.pin_list.remove( lista[i] )
-        self.pin_count = len( self.pin_list )
-        if self.pin_count == 0:
-            self.Camera_Reset()
-        self.Camera_Emit()
-        self.Board_Update()
-
-    # Camera
-    def Camera_Reset( self ):
-        self.ci = self.cn.index( 1 )
-        self.cz = self.cn[self.ci] # Camera Zoom
-    def Camera_Move( self, ex, ey ):
-        dx, dy = self.Point_Deltas( ex, ey )
-        for i in range( 0, self.pin_count ):
-            self.Move_Transform( self.pin_previous, i, dx, dy )
-    def Camera_Scale( self, ex, ey ):
-        dy = -( ( ey - self.oy ) / 10 )
-        if abs( dy ) >= 1:
-            self.oy = ey
-            self.Camera_Zoom_Step( dy )
-    def Camera_Zoom_Step( self, step ):
-        self.ci = Limit_Range( self.ci + int( step ), 0, len( self.cn ) - 1 )
-        self.cz = self.cn[self.ci]
-        self.Camera_Emit()
-    def Camera_Zoom_Fit( self ):
-        # Board
-        bl, br, bt, bb, bw, bh = self.Board_Limit( "PIN" )
-        # Widget
-        pl = 0
-        pt = 0
-        pr = self.ww
-        pb = self.hh
-        w2 = pr * 0.5
-        h2 = pb * 0.5
-
-        # Ratio
-        cl = ( pl - w2 ) / ( bl - w2 )
-        cr = ( pr - w2 ) / ( br - w2 )
-        ct = ( pt - h2 ) / ( bt - h2 )
-        cb = ( pb - h2 ) / ( bb - h2 )
-        # Zoom
-        zoom = []
-        if cl > 0:zoom.append( cl )
-        if cr > 0:zoom.append( cr )
-        if ct > 0:zoom.append( ct )
-        if cb > 0:zoom.append( cb )
-        zoom = min( zoom )
-
-        # Index
-        index = self.cn.index( 1 )
-        for i in range( 0, len( self.cn ) ):
-            if ( zoom >= self.cn[i] and zoom < self.cn[i+1] ):
-                index = i
-                break
-        # Apply
-        self.ci = index
-        self.cz = self.cn[self.ci]
-        self.Camera_Emit()
-    def Camera_Signal( self ):
-        if ( self.board_w != 0 or self.board_h != 0 ):
-            px = ( self.w2 - self.board_l ) / self.board_w
-            py = ( self.h2 - self.board_t ) / self.board_h
-        else:
-            px = 0
-            py = 0
-        self.SIGNAL_CAMERA.emit( [ px, py ], self.cz, self.pin_count )
-    def Camera_Emit( self ):
-        self.Camera_Signal()
-        for i in range( 0, self.pin_count ):
-            self.Pin_Draw_QPixmap( self.pin_list, i )
-    def Camera_Grab( self ):
-        try:self.qimage_grab = self.grab().toImage()
-        except:pass
-
-    # Packer
-    def Packer_Process( self, method ):
-        if self.select_count > 0:
-            # Variables
-            self.state_pack = True
-            # Widget
-            self.setEnabled( False )
-            self.SIGNAL_PACK_STOP.emit( True )
-            # Pin
-            self.Selection_Raise()
-            # Packer
-            thread = True
-            if thread == False:self.Packer_Single_Start( method )
-            if thread == True:self.Packer_Thread_Start( method )
-    def Packer_Single_Start( self, method ):
-        self.worker_packer = Worker_Packer()
-        self.worker_packer.run( self, "SINGLE", method )
-    def Packer_Thread_Start( self, method ):
-        # Thread
-        self.thread_packer = QThread()
-        # Worker
-        self.worker_packer = Worker_Packer()
-        self.worker_packer.moveToThread( self.thread_packer )
-        # Thread
-        self.thread_packer.started.connect( lambda : self.worker_packer.run( self, "THREAD", method ) )
-        self.thread_packer.start()
-    def Packer_Thread_Quit( self ):
-        self.thread_packer.quit()
-        self.Packer_Stop()
-    def Packer_Stop( self ):
-        # Variables
-        self.state_pack = False
-        self.Pin_Previous()
-        # Widget
-        self.setEnabled( True )
-        self.SIGNAL_PACK_STOP.emit( False )
-        # Update
-        self.update()
-
-    # UI
-    def ProgressBar_Value( self, value ):
-        self.SIGNAL_PB_VALUE.emit( value )
-    def ProgressBar_Maximum( self, maximum ):
-        self.SIGNAL_PB_MAX.emit( maximum )
-
+            if self.pin_list[i]["select"] == True:
+                lista.append( i )
+        return lista
+    def Label_Panel( self, index ):
+        info_text = self.pin_list[index]["text"]
+        info_font = self.pin_list[index]["font"]
+        info_letter = self.pin_list[index]["letter"]
+        info_pen = self.pin_list[index]["pen"]
+        info_bg = self.pin_list[index]["bg"]
+        self.REFERENCE_LABEL.emit( info_text, info_font, info_letter, info_pen, info_bg )
+        
     # Cursor
     def Cursor_Shape( self, operation, pin_node ):
         if ( operation == "color_picker" ):
@@ -3658,241 +4591,242 @@ class ImagineBoard_Reference( QWidget ):
             QApplication.setOverrideCursor( Qt.OpenHandCursor )
         else:
             QApplication.restoreOverrideCursor()
+    # UI
+    def ProgressBar_Value( self, value ):
+        self.REFERENCE_PB_VALUE.emit( value )
+    def ProgressBar_Maximum( self, maximum ):
+        self.REFERENCE_PB_MAX.emit( maximum )
 
-    # Keyboard Event
-    def keyPressEvent( self, event ):
-        # Spacebar
-        if event.key() == Qt.Key.Key_Space:
-            pass
-
-        # Escape
-        if event.key() == Qt.Key.Key_Escape:
-            self.Selection_Clear()
-            self.update()
-
-        # Delete
-        if event.key() == Qt.Key.Key_Delete:
-            selection = []
-            for i in range( 0, self.pin_count ):
-                if self.pin_list[i]["select"] == True:
-                    selection.append( self.pin_list[i] )
-            self.Relative_Delete( selection )
-            self.update()
-
-        # Pack
-        if event.key() == Qt.Key.Key_P:
-            self.Packer_Process( "GRID" )
-    def keyReleaseEvent( self, event ):
-        # Space
-        if event.key() == Qt.Key.Key_Space:
-            auto = event.isAutoRepeat()
-            if auto == False:
-                pass
-
-        # Escape
-        if event.key() == Qt.Key.Key_Escape:
-            pass
-
-        # Delete
-        if event.key() == Qt.Key.Key_Delete:
-            pass
+    # Garbage
+    def Garbage_Clean( self ):
+        try:del self.packer_qthread
+        except:pass
+        try:del self.packer_worker
+        except:pass
 
     # Context Menu
     def Context_Menu( self, event ):
         #region Variables
 
-        # variables
-        self.state_press = False
-        self.operation = None
-        state_insert = Insert_Check( self )
-
         # Cursor
         QApplication.restoreOverrideCursor()
-
+        # Variables
+        self.state_press = False
+        self.operation = None
+        check_insert = Check_Insert()
         # Path
         if self.pin_index == None:
             pin_tipo = None
+            pin_cstate = False
+            pin_cl = 0
+            pin_ct = 0
+            pin_cw = 1
+            pin_ch = 1
             pin_egs = False
             pin_efx = False
             pin_efy = False
-            pin_erz = 0
-            pin_path = None
-            pin_web = None
+            pin_url = None
             pin_qpixmap = None
         else:
             pin = self.pin_list[self.pin_index]
             pin_tipo = pin["tipo"]
-            pin_erz = pin["trz"]
+            pin_cstate = pin["cstate"]
+            pin_cl = pin["cl"]
+            pin_ct = pin["ct"]
+            pin_cw = pin["cw"]
+            pin_ch = pin["ch"]
             pin_egs = pin["egs"]
             pin_efx = pin["efx"]
             pin_efy = pin["efy"]
-            pin_path = pin["path"]
-            pin_web = pin["web"]
+            pin_url = pin["url"]
             pin_qpixmap = pin["qpixmap"]
-
-        # Color
-        string_pickcolor = "Color Picker"
-        if self.pigment_o == None:
-            string_pickcolor += " [RGB]"
-
         # Relative
-        relative = []
+        list_relative = list()
+        list_url = list()
         for i in range( 0, self.pin_count ):
-            if ( self.pin_list[i]["active"] == True or self.pin_list[i]["select"] == True ):
-                relative.append( self.pin_list[i] )
-
+            item = self.pin_list[i]
+            if ( item["active"] == True or item["select"] == True ):
+                list_relative.append( item )
+                list_url.append( item["url"] )
         # Clip
-        clip = { 
-            "cstate" : False,
-            "cl": 0,
-            "ct": 0,
-            "cw": 1,
-            "ch": 1,
-            }
+        clip = { "cstate" : pin_cstate, "cl": pin_cl, "ct": pin_ct, "cw": pin_cw, "ch": pin_ch }
+
+        # State
+        link_eo_state = self.link_eo_state
+        link_kra_state = self.link_kra_state
+        # Archive
+        link_eo_archive = str()
+        link_kra_archive = str()
+        if self.link_eo_archive == True:
+            link_eo_archive = "[ARCHIVE]"
+        if self.link_kra_archive == True:
+            link_kra_archive = "[ARCHIVE]"
 
         #endregion
         #region Menu
 
         # Menu
         qmenu = QMenu( self )
-
         # General
-        action_locked = qmenu.addAction( "Locked" )
-        action_refresh = qmenu.addAction( "Refresh" )
-        action_board_fit = qmenu.addAction( "Board Fit" )
-        action_insert_pin = qmenu.addAction( "Insert Pin" )
-        action_full_screen = qmenu.addAction( "Full Screen" )
-        qmenu.addSeparator()
-        # Label
-        menu_label = qmenu.addMenu( "Label" )
-        action_label_create = menu_label.addAction( "Create" )
-        action_label_edit = menu_label.addAction( "Edit" )
+        action_fit              = qmenu.addAction( "Fit" )
+        # Reference
+        menu_ref = qmenu.addMenu( "Reference" )
+        action_ref_refresh      = menu_ref.addAction( "Refresh" )
+        action_ref_label        = menu_ref.addAction( "Label" )
+        action_ref_link         = menu_ref.addAction( "Link" )
+        # Board
+        menu_board = qmenu.addMenu( "Board" )
+        action_link_eo          = menu_board.addAction( f"[EO] { os.path.basename( self.link_eo_url ) } { link_eo_archive }")
+        action_link_kra         = menu_board.addAction( f"[KRA] { self.link_kra_name } { link_kra_archive }")
+        menu_board.addSection( " " )
+        if link_eo_state == True:
+            action_eo_new           = menu_board.addAction( "New" )
+            action_eo_open          = menu_board.addAction( "Open" )
+            action_eo_save          = menu_board.addAction( "Save" )
+            action_eo_copy          = menu_board.addAction( "Save As" )
+            action_eo_archive       = menu_board.addAction( "Archive" )
+        elif link_kra_state == True:
+            action_kra_read         = menu_board.addAction( "Read" )
+            action_kra_write        = menu_board.addAction( "Write" )
+            action_kra_archive      = menu_board.addAction( "Archive" )
+            action_kra_unarchive    = menu_board.addAction( "Un-Archive" )
         # Pin
         menu_pin = qmenu.addMenu( "Pin" )
-        action_pin_location = menu_pin.addAction( "File Location" )
-        action_pin_copy     = menu_pin.addAction( "Copy Path" )
-        action_pin_save     = menu_pin.addAction( "Save To" )
         # Packer
-        menu_pack = qmenu.addMenu( f"Pack [ { self.select_count } ]" )
-        action_pack_grid      = menu_pack.addAction( "Linear Grid" )
-        action_pack_row       = menu_pack.addAction( "Linear Row" )
-        action_pack_column    = menu_pack.addAction( "Linear Column" )
-        action_pack_pile      = menu_pack.addAction( "Linear Pile" )
-        action_pack_area      = menu_pack.addAction( "Optimal Area" )
-        action_pack_perimeter = menu_pack.addAction( "Optimal Perimeter" )
-        action_pack_ratio     = menu_pack.addAction( "Optimal Ratio" )
-        action_pack_class     = menu_pack.addAction( "Optimal Class" )
+        menu_pack = menu_pin.addMenu( f"Pack [ { self.select_count } ]" )
+        action_pack_grid        = menu_pack.addAction( "Linear Grid" )
+        action_pack_row         = menu_pack.addAction( "Linear Row" )
+        action_pack_column      = menu_pack.addAction( "Linear Column" )
+        action_pack_pile        = menu_pack.addAction( "Linear Pile" )
+        menu_pack.addSeparator()
+        action_pack_area        = menu_pack.addAction( "Optimal Area" )
+        action_pack_perimeter   = menu_pack.addAction( "Optimal Perimeter" )
+        action_pack_ratio       = menu_pack.addAction( "Optimal Ratio" )
+        action_pack_class       = menu_pack.addAction( "Optimal Class" )
         # Reset
-        menu_reset = qmenu.addMenu( "Reset" )
-        action_reset_rotation  = menu_reset.addAction( "Rotation" )
-        action_reset_scale     = menu_reset.addAction( "Scale" )
-        # Edit
-        menu_edit = qmenu.addMenu( "Edit" )
-        action_edit_grey   = menu_edit.addAction( "View Greyscale" )
-        action_edit_flip_h = menu_edit.addAction( "Flip Horizontal" )
-        action_edit_flip_v = menu_edit.addAction( "Flip Vertical" )
-        action_edit_reset  = menu_edit.addAction( "Reset" )
+        menu_reset = menu_pin.addMenu( "Reset" )
+        action_reset_rotation   = menu_reset.addAction( "Rotation" )
+        action_reset_scale      = menu_reset.addAction( "Scale" )
+        # File
+        menu_file = menu_pin.addMenu( "File" )
+        action_file_location    = menu_file.addAction( "Open Location" )
+        action_file_copy        = menu_file.addAction( "Copy Path" )
+        action_file_data        = menu_file.addAction( "Copy Image" )
         # Color
-        menu_color = qmenu.addMenu( "Color" )
-        action_color_picker  = menu_color.addAction( string_pickcolor )
-        action_color_analyse = menu_color.addAction( "Analyse" )
+        menu_color = menu_pin.addMenu( "Color" )
+        action_color_analyse    = menu_color.addAction( "Color Analyse" )
+        action_color_lut        = menu_color.addAction( "LUT to Image" )
+        
+        # Edit
+        menu_edit = menu_pin.addMenu( "Edit" )
+        action_edit_grey        = menu_edit.addAction( "View Greyscale" )
+        action_edit_flip_h      = menu_edit.addAction( "Flip Horizontal" )
+        action_edit_flip_v      = menu_edit.addAction( "Flip Vertical" )
+        action_edit_reset       = menu_edit.addAction( "Edit Reset" )
         # Insert
-        menu_insert = qmenu.addMenu( "Insert ")
+        menu_insert = menu_pin.addMenu( "Insert ")
         action_insert_document  = menu_insert.addAction( "Document" )
         action_insert_layer     = menu_insert.addAction( "Layer" )
         action_insert_reference = menu_insert.addAction( "Reference" )
+        # Danger
+        menu_pin.addSeparator()
+        action_pin_download     = menu_pin.addAction( "Download" )
+        action_pin_rebase       = menu_pin.addAction( "Rebase" )
+        action_pin_delete       = menu_pin.addAction( "Delete" )
+        # Screen
         qmenu.addSeparator()
-        # Context
-        action_rebase = qmenu.addAction( "Rebase" )
-        action_delete = qmenu.addAction( "Delete" )
+        action_full_screen      = qmenu.addAction( "Full Screen" )
 
-        # Check Full Screen
-        action_locked.setCheckable( True )
-        action_locked.setChecked( self.state_locked )
-        action_full_screen.setCheckable( True )
-        action_full_screen.setChecked( self.state_maximized )
-        # Check Label
-        action_label_edit.setCheckable( True )
-        action_label_edit.setChecked( self.state_label )
+        # endregion
+        #region State
+
+        # Check Board
+        action_link_eo.setCheckable( True );        action_link_eo.setChecked( link_eo_state )
+        action_link_kra.setCheckable( True );       action_link_kra.setChecked( link_kra_state )
         # Check Edit
-        action_edit_grey.setCheckable( True )
-        action_edit_grey.setChecked( pin_egs )
-        action_edit_flip_h.setCheckable( True )
-        action_edit_flip_h.setChecked( pin_efx )
-        action_edit_flip_v.setCheckable( True )
-        action_edit_flip_v.setChecked( pin_efy )
-        # Check Color Picker
-        action_color_picker.setCheckable( True )
-        action_color_picker.setChecked( self.state_pickcolor )
+        action_edit_grey.setCheckable( True );      action_edit_grey.setChecked( pin_egs )
+        action_edit_flip_h.setCheckable( True );    action_edit_flip_h.setChecked( pin_efx )
+        action_edit_flip_v.setCheckable( True );    action_edit_flip_v.setChecked( pin_efy )
+        # Screen
+        action_full_screen.setCheckable( True );    action_full_screen.setChecked( self.state_maximized )
 
-        # General
-        if self.state_locked == True:
-            action_insert_pin.setEnabled( False )
-        # Label
-        if self.state_locked == True:
-            menu_label.setEnabled( False )
-        # Disable Pin
-        if pin_tipo != "image":
-            menu_pin.setEnabled( False )
-        # Disable Packer
-        if ( self.select_count == 0 or self.state_locked == True ):
-            menu_pack.setEnabled( False )
-        # Disable Reset
-        if ( self.pin_index == None or self.state_locked == True ):
-            menu_reset.setEnabled( False )
-        # Disable Edit
-        if ( self.pin_index == None or self.state_locked == True ):
-            menu_edit.setEnabled( False )
-        # Disable Color
-        if ( self.pin_index == None or self.pigment_o == None ):
-            action_color_analyse.setEnabled( False )
-        # Disable Insert
+        # Disables
         if self.pin_index == None:
+            menu_pin.setEnabled( False )
+            menu_reset.setEnabled( False )
+            menu_file.setEnabled( False )
+            menu_edit.setEnabled( False )
+            menu_insert.setEnabled( False )
             action_insert_document.setEnabled( False )
-        if self.pin_index == None or state_insert == False:
+        if self.select_count < 2:
+            menu_pack.setEnabled( False )
+        if pin_tipo == "label":
+            menu_reset.setEnabled( False )
+            menu_file.setEnabled( False )
+            menu_edit.setEnabled( False )
+            menu_insert.setEnabled( False )
+            action_pin_download.setEnabled( False )
+            action_pin_rebase.setEnabled( False )
+        if self.pigmento_picker == None:
+            action_color_analyse.setEnabled( False )
+        if self.pigmento_sampler == None: 
+            action_color_lut.setEnabled( False )
+        if check_insert == False:
             action_insert_layer.setEnabled( False )
             action_insert_reference.setEnabled( False )
-        # Disable Relative
-        if ( self.pin_index == None or self.state_locked == True ):
-            action_rebase.setEnabled( False )
-            action_delete.setEnabled( False )
+        if self.state_lock == True:
+            action_ref_label.setEnabled( False )
+            action_ref_link.setEnabled( False )
+            menu_pack.setEnabled( False )
+            menu_reset.setEnabled( False )
+            menu_edit.setEnabled( False )
+            action_pin_download.setEnabled( False )
+            action_pin_rebase.setEnabled( False )
+            action_pin_delete.setEnabled( False )
 
         #endregion
         #region Actions
 
         # Mapping
         action = qmenu.exec_( self.mapToGlobal( event.pos() ) )
-
         # General
-        if action == action_locked:
-            self.Board_Locked( not self.state_locked )
-        if action == action_board_fit:
+        if action == action_fit:
             self.Board_Fit()
-        if action == action_insert_pin:
-            bx = event.pos().x()
-            by = event.pos().y()
-            self.Pin_URL( bx, by )
-        if action == action_refresh:
-            self.SIGNAL_REFRESH.emit()
-        if action == action_full_screen:
-            self.SIGNAL_FULL_SCREEN.emit( not self.state_maximized )
-
-        # Label
-        if action == action_label_create:
+        # Reference
+        if action == action_ref_refresh:
+            self.Board_Refresh()
+        if action == action_ref_label:
             self.Label_Insert( event )
-        if action == action_label_edit:
-            self.state_label = not self.state_label
-            self.SIGNAL_LABEL_PANEL.emit( self.state_label )
-
-        # Pin
-        if action == action_pin_location:
-            self.SIGNAL_LOCATION.emit( pin_path )
-        if action == action_pin_copy:
-            Path_Copy( self, pin_path )
-        if action == action_pin_save:
-            self.SIGNAL_PIN_SAVE.emit( pin_qpixmap )
-
-        # Pack Linear
+        if action == action_ref_link:
+            pos = event.pos()
+            self.Pin_URL( pos.x(), pos.y() )
+        # Link
+        if action == action_link_eo:
+            self.Link_EO()
+        if action == action_link_kra:
+            self.Link_KRA()
+        # Board
+        if link_eo_state == True:
+            if action == action_eo_new:
+                self.EO_New()
+            if action == action_eo_open:
+                self.EO_Open()
+            if action == action_eo_save:
+                self.EO_Save()
+            if action == action_eo_copy:
+                self.EO_Copy()
+            if action == action_eo_archive:
+                self.EO_Archive()
+        elif link_kra_state == True:
+            if action == action_kra_read:
+                self.KRA_Read()
+            if action == action_kra_write:
+                self.KRA_Write( True )
+            if action == action_kra_archive:
+                self.KRA_Archive()
+            if action == action_kra_unarchive:
+                self.KRA_UnArchive()
+        # Pack Linear ( loops )
         if action == action_pack_grid:
             self.Packer_Process( "GRID" )
         if action == action_pack_row:
@@ -3901,7 +4835,7 @@ class ImagineBoard_Reference( QWidget ):
             self.Packer_Process( "COLUMN" )
         if action == action_pack_pile:
             self.Packer_Process( "PILE" )
-        # Pack Optimal
+        # Pack Optimal ( loops )
         if action == action_pack_area:
             self.Packer_Process( "AREA" )
         if action == action_pack_perimeter:
@@ -3910,14 +4844,25 @@ class ImagineBoard_Reference( QWidget ):
             self.Packer_Process( "RATIO" )
         if action == action_pack_class:
             self.Packer_Process( "CLASS" )
-
-        # Reset
+        # Reset ( loops )
         if action == action_reset_rotation:
-            self.Reset_Rotation( relative )
+            self.Reset_Rotation( list_relative )
         if action == action_reset_scale:
-            self.Reset_Scale( relative )
-
-        # Edit
+            self.Reset_Scale( list_relative )
+        # File
+        if action == action_file_location:
+            File_Open_Location( pin_url )
+        if action == action_file_copy:
+            File_Copy_Path( pin_url )
+        if action == action_file_data:
+            File_Copy_Image( pin_url )
+        # Color
+        if action == action_color_analyse:
+            qimage = pin_qpixmap.toImage()
+            Color_Analyse( self.pigmento_picker, qimage )
+        if action == action_color_lut:
+            Color_LUT_to_Image( self.pigmento_sampler, list_url )
+        # Edit ( loops )
         if action == action_edit_grey:
             pin_egs = not pin_egs
             self.Edit_Pin( pin_egs, pin_efx, pin_efy )
@@ -3929,51 +4874,577 @@ class ImagineBoard_Reference( QWidget ):
             self.Edit_Pin( pin_egs, pin_efx, pin_efy )
         if action == action_edit_reset:
             self.Edit_Pin( False, False, False )
-
-        # Color
-        if action == action_color_picker:
-            self.state_pickcolor = not self.state_pickcolor
-        if action == action_color_analyse:
-            qimage = pin_qpixmap.toImage()
-            self.SIGNAL_ANALYSE.emit( qimage )
-
         # Insert
         if action == action_insert_document:
-            self.SIGNAL_NEW_DOCUMENT.emit( pin_path, clip )
+            Insert_Document( self, pin_url, clip )
         if action == action_insert_layer:
-            self.SIGNAL_INSERT_LAYER.emit( pin_path, clip )
+            Insert_Layer( self, pin_url, clip )
         if action == action_insert_reference:
-            self.SIGNAL_INSERT_REFERENCE.emit( pin_path, clip )
-
-        # Relative
-        if action == action_rebase:
-            self.Relative_Rebase( relative )
-        if action == action_delete:
-            self.Relative_Delete( relative )
+            Insert_Reference( self, pin_url, clip )
+        # Danger
+        if action == action_pin_download:
+            self.Relative_Download( list_relative )
+        if action == action_pin_rebase:
+            self.Relative_Rebase( list_relative )
+        if action == action_pin_delete:
+            self.Relative_Delete( list_relative )
+        # Screen
+        if action == action_full_screen:
+            self.REFERENCE_FULL_SCREEN.emit( not self.state_maximized )
 
         #endregion
+
+    # Link
+    def Link_EO( self ):
+        # Save
+        self.KRA_Write( False )
+        # Link
+        self.link_eo_state = True
+        self.link_kra_state = False
+        self.Link_State()
+        # Switch
+        self.EO_Load()
+    def Link_KRA( self ):
+        # Save
+        self.EO_Save()
+        # Link
+        self.link_eo_state = False
+        self.link_kra_state = True
+        self.Link_State()
+        # Switch
+        self.KRA_Read()
+    def Link_State( self ):
+        Kritarc_Write( DOCKER_NAME, "link_eo_state", self.link_eo_state )
+        Kritarc_Write( DOCKER_NAME, "link_kra_state", self.link_kra_state )
+    # EO Functions
+    def EO_Load( self ):
+        if self.link_eo_url != None and os.path.isfile( self.link_eo_url ) == True:
+            self.File_Read( self.link_eo_url )
+        else:
+            self.Board_Empty()
+    def EO_New( self ):
+        link_eo_url = self.Dialog_Save( "New File Location" )
+        if link_eo_url != None:
+            exists = os.path.exists( link_eo_url )
+            if exists == True:
+                Message_Warnning( "ERROR", "new board requires a new url")
+            elif exists == False:
+                self.link_eo_url = link_eo_url
+                self.link_eo_archive = False
+                self.Board_Empty()
+                self.File_Write( link_eo_url )
+    def EO_Open( self ):
+        link_eo_url = self.Dialog_Load( "Open File Location" )
+        if link_eo_url != None:
+            self.link_eo_url = link_eo_url
+            self.File_Read( self.link_eo_url )
+            Kritarc_Write( DOCKER_NAME, "link_eo_url", self.link_eo_url )
+    def EO_Save( self ):
+        if ( self.link_eo_url != None ) and ( os.path.isfile( self.link_eo_url ) == True ) and ( self.link_eo_archive == False ):
+            self.File_Write( self.link_eo_url )
+    def EO_Copy( self ):
+        link_eo_url = self.Dialog_Save( "Copy File Location" )
+        if link_eo_url != None and self.link_eo_url != link_eo_url:
+            self.link_eo_url = link_eo_url
+            self.link_eo_archive = False
+            self.File_Write( link_eo_url )
+    def EO_Archive( self ):
+        archive_url = self.Dialog_Save( "Archive File Location" )
+        if archive_url != None:
+            if self.link_eo_url == archive_url:
+                self.link_eo_archive = True
+            self.File_Archive( archive_url )
+    # KRA Functions
+    def KRA_Read( self ):
+        if self.link_kra_access != None:
+            self.link_kra_archive = False
+            file_name = self.link_kra_access.fileName()
+            annotation = self.link_kra_access.annotation( DOCKER_NAME )
+            decode = bytes( annotation ).decode( encode )
+            if len( decode ) > 0:
+                board = decode.split( "\n" )
+                self.Data_Read( board )
+            else:
+                self.link_kra_access.removeAnnotation( DOCKER_NAME )
+                self.Board_Empty()
+        else:
+            self.Board_Empty()
+    def KRA_Write( self, save ):
+        if ( self.link_kra_access != None ) and ( self.link_kra_archive == False ):
+            self.link_kra_archive = False
+            data = self.Data_Write()
+            self.link_kra_access.setAnnotation( DOCKER_NAME, "Document", QByteArray( data.encode() ) )
+            if save == True:
+                self.link_kra_access.save()
+    def KRA_Archive( self ):
+        if self.link_kra_access != None:
+            self.link_kra_archive = True
+            data = self.Data_Archive()
+            self.link_kra_access.setAnnotation( DOCKER_NAME, "Document", QByteArray( data.encode() ) )
+            self.link_kra_access.save()
+    def KRA_UnArchive( self ):
+        if self.link_kra_access != None:
+            self.link_kra_archive = False
+            data = self.Data_Write()
+            self.link_kra_access.setAnnotation( DOCKER_NAME, "Document", QByteArray( data.encode() ) )
+            self.Board_Render()
+    # Dialog
+    def Dialog_Load( self, title ):
+        # Variables
+        directory = str()
+        if self.link_eo_state == True:
+            directory = self.link_eo_url
+        # File Dialog
+        file_dialog = QFileDialog( QWidget( self ) )
+        file_dialog.setFileMode( QFileDialog.AnyFile )
+        file_url = file_dialog.getOpenFileName( self, title, directory, "File( *.eo )" )[0]
+        file_url = os.path.normpath( file_url )
+        if file_url in invalid:
+            file_url = None
+        return file_url
+    def Dialog_Save( self, title ):
+        # Variabels
+        directory = str()
+        if self.link_eo_state == True:
+            directory = self.link_eo_url
+        elif self.link_kra_state == True:
+            if ( self.link_kra_access != None ):
+                name = self.link_kra_name.split( "." )[0]
+                directory = os.path.join( dirname, f"{ name }.eo")
+        # File Dialog
+        file_dialog = QFileDialog( QWidget( self ) )
+        file_dialog.setFileMode( QFileDialog.AnyFile )
+        file_url = file_dialog.getSaveFileName( self, title, directory, "File( *.eo )" )[0]
+        file_url = os.path.normpath( file_url )
+        if file_url in invalid:
+            file_url = None
+        return file_url
+    # File
+    def File_Read( self, url ):
+        with open( url, "r", encoding=encode ) as self.link_eo_access:
+            board = self.link_eo_access.readlines()
+            self.Data_Read( board )
+    def File_Write( self, url ):
+        data = self.Data_Write()
+        self.File_Access( url, data )
+    def File_Archive( self, url ):
+        data = self.Data_Archive()
+        self.File_Access( url, data )
+    def File_Access( self, url, data ):
+        if self.link_eo_access == None or self.link_eo_access.closed == True:
+            with open( url, "w", encoding=encode ) as self.link_eo_access:
+                    self.link_eo_access.write( data )
+    # Data
+    def Data_Read( self, board ):
+        # Variables
+        count = len( board )
+        if self.link_eo_state == True:   self.link_eo_archive = False
+        if self.link_kra_state == True:  self.link_kra_archive = False
+        # Progress Bar
+        self.ProgressBar_Value( 0 )
+        self.ProgressBar_Maximum( count )
+        # Construct Board
+        pin_list = list()
+        camera_zoom = 1
+        camera_position = [ 1, 1 ]
+        if len( board ) > 0 and board[0].startswith( DOCKER_NAME ) == True:
+            for i in range( 1, count ):
+                # Progress Bar
+                self.ProgressBar_Value( i+1 )
+                QApplication.processEvents()
+                # Cycle
+                try:
+                    # Formating
+                    line = board[i].replace( "\n", "" )
+                    # Evaluation
+                    if line.endswith( "reference_archive" ) == True or line.endswith( "data" ) == True:
+                        if self.link_eo_state == True:   self.link_eo_archive = True
+                        if self.link_kra_state == True:  self.link_kra_archive = True
+                    elif line.startswith( "ref_camera_position=" ) == True or line.startswith( "camera_position=" ) == True:
+                        line = line.replace( "ref_", "" )
+                        line = line.replace( "camera_position=", "" )
+                        camera_position = eval( line )
+                    elif line.startswith( "ref_camera_zoom=" ) == True or line.startswith( "camera_zoom=" ) == True:
+                        line = line.replace( "ref_", "" )
+                        line = line.replace( "camera_zoom=", "" )
+                        camera_zoom = float( line )
+                    elif line.startswith( "{" ) and line.endswith( "}" ): # Dictionary
+                        # Variables
+                        qpixmap = None
+                        # Read
+                        line = eval( line )
+                        cstate = line["cstate"]
+                        cl = line["cl"]
+                        ct = line["ct"]
+                        cw = line["cw"]
+                        ch = line["ch"]
+                        # URL
+                        try: # Current Version
+                            url = line["url"]
+                        except: # Previous Version
+                            path = line["path"]
+                            web = line["web"]
+                            if    path != None: url = os.path.normpath( path )
+                            elif  web  != None: url = web
+                            line["url"] = url
+                            line.pop( "path" )
+                            line.pop( "web" )
+                        # ZArchive
+                        try: # Current Version
+                            zarchive = line["zarchive"]
+                        except: # Previous Version
+                            zarchive = line["zdata"]
+                            line["zarchive"] = zarchive
+                            line.pop( "zdata" )
+                        # Load
+                        if os.path.isfile( url ): # Local
+                            reader = QImageReader( url )
+                            pix = QPixmap().fromImageReader( reader )
+                            if pix.isNull() == False:
+                                qpixmap = pix
+                        elif Check_Html( url ): # internet
+                            pix = Download_QPixmap( url )
+                            if pix.isNull() == False:
+                                qpixmap = pix
+                        elif zarchive != None: # Import
+                            # Buffer
+                            byte_array = QByteArray( zarchive )
+                            buffer = QBuffer()
+                            buffer.setData( byte_array )
+                            buffer.open( QIODevice.OpenModeFlag.ReadOnly )
+                            reader = QImageReader( buffer )
+                            if reader.canRead() == True:
+                                qpixmap = QPixmap().fromImageReader( reader )
+                        # Copy
+                        check_qpixmap = qpixmap != None
+                        if check_qpixmap:
+                            if cstate == True:
+                                w = qpixmap.width()
+                                h = qpixmap.height()
+                                qpixmap = qpixmap.copy( int( w * cl ), int( h * ct ), int( w * cw ), int( h * ch ) )
+                            line["qpixmap"] = qpixmap
+                        # Construct
+                        pin_list.append( line )
+                        if check_qpixmap:
+                            del qpixmap
+                except:
+                    pass
+        # Preview & Grid
+        if self.pin_list != pin_list:
+            self.pin_list = pin_list
+        # Reference
+        self.Board_Load( pin_list )
+        self.Camera_Load( camera_position, camera_zoom )
+        # Progress Bar
+        self.ProgressBar_Value( 0 )
+        self.ProgressBar_Maximum( 1 )
+    def Data_Write( self ):
+        # Variables
+        data = ""
+        count = len( self.pin_list )
+        # Construct Board
+        if len( self.pin_list ) > 0:
+            # Header
+            data = DOCKER_NAME
+            # Type of save
+            data += f"\nreference_connect"
+            # Camera
+            data += f"\ncamera_position={ self.cam_p }"
+            data += f"\ncamera_zoom={ self.cam_z }"
+            # Cycle
+            for i in range( 0, count ):
+                # Item
+                item = self.pin_list[i]
+                line = item.copy()
+                line["qpixmap"] = None
+                line["draw"] = None
+                line["zarchive"] = None
+                data += f"\n{ line }"
+        # Return
+        return data
+    def Data_Archive( self ):
+        # Variables
+        data = ""
+        count = len( self.pin_list )
+        # Progress Bar
+        self.ProgressBar_Value( 0 )
+        self.ProgressBar_Maximum( count )
+        # Construct Board
+        if len( self.pin_list ) > 0:
+            # Header
+            data = DOCKER_NAME
+            # Type of save
+            data += f"\nreference_archive"
+            # Camera
+            data += f"\ncamera_position={ self.cam_p }"
+            data += f"\ncamera_zoom={ self.cam_z }"
+            # Cycle
+            for i in range( 0, count ):
+                # Progress Bar
+                self.ProgressBar_Value( i+1 )
+                QApplication.processEvents()
+                # Read
+                item = self.pin_list[i]
+                line = item.copy()
+                url = line["url"]
+                # ZData
+                if os.path.isfile( url ): # Local
+                    line["zarchive"] = self.Bytes_Python( url )
+                elif Check_Html( url ): # Internet
+                    line["zarchive"] = Download_Data( url )
+                else:
+                    line["zarchive"] = None
+                # Clean
+                line["qpixmap"] = None
+                line["draw"] = None
+                # String
+                data += f"\n{ line }"
+        # Progress Bar
+        self.ProgressBar_Value( 0 )
+        self.ProgressBar_Maximum( 1 )
+        # Return
+        return data
+    # Bytes
+    def Bytes_QPixmap( self, qpixmap ):
+        extension = "PNG" # "PNG" "JPG"
+        ba = QtCore.QByteArray()
+        buffer = QtCore.QBuffer( ba )
+        buffer.open( QtCore.QIODevice.WriteOnly )
+        ok = qpixmap.save( buffer, extension )
+        assert ok
+        pixmap_bytes = ba.data()
+        return pixmap_bytes
+    def Bytes_Python( self, url ):
+        with open( url, "rb" ) as f:
+            data = f.read()
+        return data
+
+    # Packer
+    def Packer_Interrupt( self ):
+        try:self.packer_worker.Stop()
+        except:pass
+    def Packer_Process( self, mode ):
+        if self.select_count > 0:
+            # Variables
+            self.state_pack = True
+            # Widget
+            self.setEnabled( False )
+            self.REFERENCE_PACKER.emit( True )
+            # Pin
+            self.Selection_Raise()
+            # Packer
+            thread = True
+            if thread == False: self.Packer_Single( thread, mode )
+            if thread == True:  self.Packer_Thread( thread, mode )
+    def Packer_Connect( self ):
+        self.state_cycle = True
+        self.packer_worker = Worker_Packer()
+        self.packer_worker.PACKER_CYCLE.connect( self.Packer_Cycle )
+        self.packer_worker.PACKER_PB_VALUE.connect( self.ProgressBar_Value )
+        self.packer_worker.PACKER_PB_MAX.connect( self.ProgressBar_Maximum )
+        self.packer_worker.PACKER_FINISH.connect( self.Packer_Finish )
+    def Packer_Single( self, thread, mode ):
+        self.Packer_Connect()
+        self.packer_worker.run( self, thread, mode )
+    def Packer_Thread( self, thread, mode ):
+        # Thread
+        self.packer_qthread = QtCore.QThread()
+        # Worker
+        self.Packer_Connect()
+        self.packer_worker.moveToThread( self.packer_qthread )
+        # Thread
+        self.packer_qthread.started.connect( lambda : self.packer_worker.run( self, thread, mode ) )
+        self.packer_qthread.start()
+    def Packer_Cycle( self, boolean ):
+        self.REFERENCE_PACKER.emit( boolean )
+    def Packer_Finish( self, thread ):
+        # Thread
+        if thread == True:
+            self.packer_qthread.quit()
+        # Variables
+        self.state_pack = False
+        self.Pin_Previous()
+        # Widget
+        self.REFERENCE_PACKER.emit( False )
+        self.setEnabled( True )
+        # Update
+        self.update()
+
+    # Reset
+    def Reset_Rotation( self, lista ):
+        self.Pin_Previous()
+        for item in lista:
+            index = item["index"]
+            angle = -self.pin_list[index]["trz"]
+            self.Rotate_Transform( self.pin_previous, index, angle )
+            self.Pin_Draw_QPixmap( self.pin_list, index )
+    def Reset_Scale( self, lista ):
+        self.Pin_Previous()
+        for pin in lista:
+            index = pin["index"]
+            self.Scale_Reset( self.pin_previous, index )
+            self.Pin_Draw_QPixmap( self.pin_list, index )
+    # Edit
+    def Edit_Pin( self, egs, efx, efy ):
+        for i in range( 0, self.pin_count ):
+            valid = self.pin_list[i]["active"] == True or self.pin_list[i]["select"] == True
+            if valid == True:
+                # Write
+                self.pin_list[i]["egs"] = egs
+                self.pin_list[i]["efx"] = efx
+                self.pin_list[i]["efy"] = efy
+                # QPixmaps
+                self.Pin_Draw_QPixmap( self.pin_list, i )
+    # Relative
+    def Relative_Download( self, lista ):
+        # Select Location
+        file_dialog = QFileDialog( QWidget( self ) )
+        file_dialog.setFileMode( QFileDialog.AnyFile )
+        directory = file_dialog.getExistingDirectory( self, f"Download to Directory" )
+        # Save Files
+        if directory not in invalid:
+            # Variables
+            count = len( lista )
+            # Progress Bar
+            self.REFERENCE_PB_VALUE.emit( 0 )
+            self.REFERENCE_PB_MAX.emit( count )
+            # Cycle
+            for i in range( 0, count ):
+                try:
+                    # Progress
+                    if i % 5 == 0:
+                        self.REFERENCE_PB_VALUE.emit( i + 1 )
+                        QApplication.processEvents()
+                    # Read
+                    url = lista[i]["url"]
+                    # Variables
+                    qpixmap = None
+                    basename = os.path.basename( url )
+                    saveto = os.path.normpath( os.path.join( directory, basename ) )
+                    if os.path.exists( saveto ) == False:
+                        # Checks
+                        check_file = os.path.isfile( url )
+                        check_web = Check_Html( url )
+                        # QPixmap
+                        if check_file:
+                            reader = QImageReader( url )
+                            if reader.canRead() == True:
+                                reader.setAutoTransform( True )
+                                pix = QPixmap().fromImageReader( reader )
+                                qpixmap = pix
+                        elif check_web:
+                            qpixmap = Download_QPixmap( url )
+                        if qpixmap != None:
+                            boolean = qpixmap.save( saveto )
+                            if boolean == True: string = f"{ DOCKER_NAME } | DOWNLOAD { saveto }"
+                            else:               string = f"{ DOCKER_NAME } | ERROR { url }"
+                            try:QtCore.qDebug( string )
+                            except:pass
+                except:
+                    pass
+            # Progress Bar
+            self.REFERENCE_PB_VALUE.emit( 0 )
+            self.REFERENCE_PB_MAX.emit( 1 )
+    def Relative_Rebase( self, lista ):
+        # Variables
+        count = self.pin_count
+        previous_url = str()
+        suggestion = str()
+        previous_url = lista[0]["url"]
+        # Directory
+        list_url = list()
+        file_dialog = QFileDialog( QWidget( self ) )
+        file_dialog.setFileMode( QFileDialog.DirectoryOnly )
+        directory = file_dialog.getExistingDirectory( self, f"Select Directory - previous_url = { previous_url }", os.path.dirname( previous_url ) )
+        if directory not in invalid:
+            qdir = QDir( directory )
+            qdir.setSorting( QDir.Name )
+            qdir.setFilter( QDir.Files | QDir.NoSymLinks | QDir.NoDotAndDotDot )
+            qdir.setNameFilters( file_normal )
+            # Recursive Search
+            if self.state_rebase == True:   recursive = QDirIterator.Subdirectories
+            else:                           recursive = QDirIterator.NoIteratorFlags
+            # Files
+            it = QDirIterator( qdir, recursive )
+            while( it.hasNext() ):
+                it_url = os.path.normpath( it.next() )
+                list_url.append( it_url )
+        # Search Cycles
+        path_old = list()
+        for i in range( 0, self.pin_count ):
+            item = self.pin_list[i]
+            url = item["url"]
+            if os.path.isfile( url ):
+                reader = QImageReader( url )
+                qpixmap = QPixmap().fromImageReader( reader )
+                if qpixmap.isNull() == False:
+                    item["qpixmap"] = qpixmap
+                    item["draw"] = self.Pin_Draw_QPixmap( self.pin_list, i )
+                else:
+                    item["qpixmap"] = None
+                    item["draw"] = None
+                path_old.append( url )
+        # Lista
+        for item in lista:
+            # Read
+            tipo = item["tipo"]
+            bx = item["bx"]
+            by = item["by"]
+            cstate = item["cstate"]
+            cl = item["cl"]
+            ct = item["ct"]
+            cw = item["cw"]
+            ch = item["ch"]
+            url = item["url"]
+            qpixmap = item["qpixmap"]
+            # Path
+            basename = os.path.basename( url )
+            if ( tipo == "image" and qpixmap == None ):
+                for fp in list_url:
+                    fn = os.path.basename( fp )
+                    if basename == fn and fp not in path_old:
+                        delta = 20
+                        clip = { "cstate":cstate, "cl":cl, "ct":ct, "cw":cw, "ch":ch }
+                        self.REFERENCE_PIN_INSERT.emit( "image", bx + delta, by + delta, None, fp, clip )
+                        break
+            # Selection
+            if len( self.pin_list ) > count:
+                self.Selection_Clear()
+                for i in range( count, len( self.pin_list ) ):
+                    self.pin_list[i]["select"] = True
+                self.Selection_Verify()
+        # Update
+        self.Board_Update()
+        self.Board_Focus()
+    def Relative_Delete( self, lista ):
+        for i in range( 0, len( lista ) ):
+            self.pin_list.remove( lista[i] )
+        self.pin_count = len( self.pin_list )
+        if self.pin_count == 0:
+            self.Camera_Reset()
+        self.Camera_Emit()
+        self.Board_Update()
 
     # Mouse Events
     def mousePressEvent( self, event ):
         # Variable
         self.state_press = True
-
         # Event
+        em = event.modifiers()
+        eb = event.buttons()
         ex = event.x()
         ey = event.y()
         self.ox = ex
         self.oy = ey
         self.ex = ex
         self.ey = ey
-
         # Pin
         self.Pin_Update()
         self.Pin_Index( ex, ey )
         self.Pin_Active( self.pin_index )
         self.Pin_Limits()
-
         # LMB
-        if ( event.modifiers() == QtCore.Qt.NoModifier and event.buttons() == QtCore.Qt.LeftButton ):
+        if em == QtCore.Qt.NoModifier and eb == QtCore.Qt.LeftButton:
             if self.state_pickcolor == True:
                 self.operation = "color_picker"
                 ColorPicker_Event( self, self.ex, self.ey, self.qimage_grab, True )
@@ -3983,102 +5454,97 @@ class ImagineBoard_Reference( QWidget ):
                 else:
                     self.operation = "pin_move"
                     self.pin_node = 0
-        if ( event.modifiers() == QtCore.Qt.ShiftModifier and event.buttons() == QtCore.Qt.LeftButton ):
+        if em == QtCore.Qt.ShiftModifier and eb == QtCore.Qt.LeftButton:
             self.operation = "camera_move"
-        if ( event.modifiers() == QtCore.Qt.ControlModifier and event.buttons() == QtCore.Qt.LeftButton ):
+        if em == QtCore.Qt.ControlModifier and eb == QtCore.Qt.LeftButton:
             self.operation = "select_add"
             self.Selection_Click( self.pin_index )
-        if ( event.modifiers() == QtCore.Qt.AltModifier and event.buttons() == QtCore.Qt.LeftButton ):
+        if em == QtCore.Qt.AltModifier and eb == QtCore.Qt.LeftButton:
             self.operation = "drag_drop"
-        if ( event.modifiers() == ( QtCore.Qt.ShiftModifier | QtCore.Qt.ControlModifier ) and event.buttons() == QtCore.Qt.LeftButton ):
+            self.Clip_Pin()
+        if em == ( QtCore.Qt.ShiftModifier | QtCore.Qt.ControlModifier ) and eb == QtCore.Qt.LeftButton:
             self.operation = "pin_transform"
-        if ( event.modifiers() == ( QtCore.Qt.ShiftModifier | QtCore.Qt.ControlModifier | QtCore.Qt.AltModifier ) and event.buttons() == QtCore.Qt.LeftButton ):
+        if em == ( QtCore.Qt.ShiftModifier | QtCore.Qt.ControlModifier | QtCore.Qt.AltModifier ) and eb == QtCore.Qt.LeftButton:
             self.Pin_Preview( self.pin_index )
-
         # MMB
-        if ( event.modifiers() == QtCore.Qt.NoModifier and event.buttons() == QtCore.Qt.MiddleButton ):
+        if em == QtCore.Qt.NoModifier and eb == QtCore.Qt.MiddleButton:
             self.operation = "camera_move"
-
         # RMB
-        if ( event.modifiers() == QtCore.Qt.NoModifier and event.buttons() == QtCore.Qt.RightButton ):
+        if em == QtCore.Qt.NoModifier and eb == QtCore.Qt.RightButton:
+            self.dirty = False
             self.operation = None
             self.Context_Menu( event )
-        if ( event.modifiers() == QtCore.Qt.ShiftModifier and event.buttons() == QtCore.Qt.RightButton ):
+        if em == QtCore.Qt.ShiftModifier and eb == QtCore.Qt.RightButton:
             self.operation = "camera_scale"
-        if ( event.modifiers() == QtCore.Qt.ControlModifier and event.buttons() == QtCore.Qt.RightButton ):
+        if em == QtCore.Qt.ControlModifier and eb == QtCore.Qt.RightButton:
             self.operation = "select_minus"
             self.Selection_Click( self.pin_index )
-        if ( event.modifiers() == QtCore.Qt.AltModifier and event.buttons() == QtCore.Qt.RightButton ):
+        if em == QtCore.Qt.AltModifier and eb == QtCore.Qt.RightButton:
             self.operation = "drag_drop"
-
+            self.Clip_Pin()
         # Update
         self.Cursor_Shape( self.operation, self.pin_node )
         self.update()
     def mouseMoveEvent( self, event ):
         # Variable
         self.state_press = True
-
         # Event
+        em = event.modifiers()
+        eb = event.buttons()
         ex = event.x()
         ey = event.y()
         self.ex = ex
         self.ey = ey
-
         # Operations
         if self.operation == "color_picker":
             ColorPicker_Event( self, self.ex, self.ey, self.qimage_grab, True )
-
-        if self.state_locked == False:
-            if self.operation == "pin_move":
-                dx, dy = self.Point_Deltas( ex, ey )
-                if event.modifiers() == QtCore.Qt.NoModifier:
-                    self.Move_Pin( dx, dy, False )
-                else:
-                    self.Move_Pin( dx, dy, True )
-            if self.operation == "pin_transform":
-                self.Pin_Transform( ex, ey, self.pin_node )
-
+        if self.operation == "pin_move" and self.state_lock == False:
+            dx, dy = self.Point_Deltas( ex, ey )
+            if em == QtCore.Qt.NoModifier:
+                self.Move_Pin( dx, dy, False )
+            else:
+                self.Move_Pin( dx, dy, True )
+            self.dirty = True
+        if self.operation == "pin_transform" and self.state_lock == False:
+            self.Pin_Transform( ex, ey, self.pin_node )
+            self.dirty = True
         if self.operation == "camera_move":
             self.Camera_Move( ex, ey ) 
+            self.dirty = True
         if self.operation == "camera_scale":
             self.Camera_Scale( ex, ey )
-
+            self.dirty = True
         if self.operation == "select_add":
             self.Selection_Box( ex, ey, "add" )
+            self.dirty = True
         if self.operation == "select_minus":
             self.Selection_Box( ex, ey, "minus" )
+            self.dirty = True
         if self.operation == "select_replace":
             self.Selection_Box( ex, ey, "replace" )
-
+            self.dirty = True
         if self.operation == "drag_drop":
-            clip = { 
-                "cstate" : False,
-                "cl": 0,
-                "ct": 0,
-                "cw": 1,
-                "ch": 1,
-                }
-            Insert_Drag( self, self.pin_path, clip )
-
+            Insert_Drag( self, self.pin_url, self.clip_pin, False )
+            self.dirty = True
         # Update
         self.update()
     def mouseDoubleClickEvent( self, event ):
         # Event
+        em = event.modifiers()
+        eb = event.buttons()
         ex = event.x()
         ey = event.y()
-
         # LMB
-        if ( event.modifiers() == QtCore.Qt.NoModifier and event.buttons() == QtCore.Qt.LeftButton ):
+        if em == QtCore.Qt.NoModifier and eb == QtCore.Qt.LeftButton:
             self.Pin_Index( ex, ey )
             self.Pin_Preview( self.pin_index )
-        if ( event.modifiers() == QtCore.Qt.ControlModifier and event.buttons() == QtCore.Qt.LeftButton ):
+        if em == QtCore.Qt.ControlModifier and eb == QtCore.Qt.LeftButton:
             self.Selection_All()
         # RMB
-        if ( event.modifiers() == QtCore.Qt.ControlModifier and event.buttons() == QtCore.Qt.RightButton ):
+        if em == QtCore.Qt.ControlModifier and eb == QtCore.Qt.RightButton:
             self.Selection_Clear()
     def mouseReleaseEvent( self, event ):
         # Variables
-        self.state_press = False
         self.drop = False
         self.drag = False
         # Color Picker
@@ -4088,19 +5554,20 @@ class ImagineBoard_Reference( QWidget ):
         self.Release_Event()
     def Release_Event( self ):
         # Variables General
+        self.state_press = False
         self.operation = None
         self.select_box = False
         # Variables Pin
         self.Pin_Update()
         self.Pin_Previous()
         self.pin_index = None
-        self.pin_path = None
+        self.pin_url = None
         self.pin_basename = None
         self.pin_node = None
         self.pin_count = len( self.pin_list )
         # Variables Limit
-        self.limit_x = []
-        self.limit_y = []
+        self.limit_x = list()
+        self.limit_y = list()
 
         # Update
         self.Cursor_Shape( None, None )
@@ -4114,24 +5581,24 @@ class ImagineBoard_Reference( QWidget ):
         # Variables
         self.state_press = True
         # Camera Zoom
-        delta_y = event.angleDelta().y()
         angle = 5
-        if delta_y >= angle:
-            self.Camera_Zoom_Step( +1 )
-        else:
-            self.Camera_Zoom_Step( -1 )
+        delta_y = event.angleDelta().y()
+        if delta_y >= angle:    self.Camera_Zoom_Step( +1 )
+        if delta_y <= -angle:   self.Camera_Zoom_Step( -1 )
         # Update
         self.update()
     # Drag and Drop Event
     def dragEnterEvent( self, event ):
-        if event.mimeData().hasImage:
+        mime_data, format_id = Insert_Drop( self, event )
+        if len( mime_data ) > 0 or format_id == drag_id:
             self.drop = True
             event.accept()
         else:
             event.ignore()
         self.update()
     def dragMoveEvent( self, event ):
-        if event.mimeData().hasImage:
+        mime_data, format_id = Insert_Drop( self, event )
+        if len( mime_data ) > 0 or format_id == drag_id:
             self.drop = True
             event.accept()
         else:
@@ -4142,32 +5609,27 @@ class ImagineBoard_Reference( QWidget ):
         event.accept()
         self.update()
     def dropEvent( self, event ):
-        if event.mimeData().hasImage:
-            if ( self.drop == True and self.drag == False and self.state_locked == False ):
-                # Policy
+        mime_data, format_id = Insert_Drop( self, event )
+        if len( mime_data ) > 0 or format_id == drag_id:
+            if ( self.drop == True and self.drag == False and self.state_lock == False ):
+                # Event
                 event.setDropAction( Qt.CopyAction )
-                # Position
                 pos = event.pos()
                 bx, by = self.Point_Location( pos.x(), pos.y() )
-                # Data
-                mime_data = Drop_Inside( self, event, False )
-                # Insert Pin
-                count = len( mime_data )
-                # Board
+                # Variables
                 self.state_press = True
+                self.drop = False
+                count = len( mime_data )
                 # Progress Bar
                 self.ProgressBar_Value( 0 )
                 self.ProgressBar_Maximum( count )
                 # Pin References
-                self.drop = False
                 for i in range( 0, count ):
                     # Progress Bar
                     self.ProgressBar_Value( i + 1 )
                     QApplication.processEvents()
                     # Pin
-                    image_path = mime_data[i]
-                    pin = { "bx" : bx, "by" : by, "image_path" : image_path }
-                    self.SIGNAL_PIN_IMAGE.emit( pin, self.clip_false )
+                    self.REFERENCE_PIN_INSERT.emit( "image", bx, by, None, mime_data[i], clip_false )
                 # Progress Bar
                 self.ProgressBar_Value( 0 )
                 self.ProgressBar_Maximum( 1 )
@@ -4181,6 +5643,38 @@ class ImagineBoard_Reference( QWidget ):
         self.drag = False
         self.Release_Event()
         self.update()
+    # Keyboard Event
+    def keyPressEvent( self, event ):
+        # Spacebar
+        if event.key() == Qt.Key.Key_Space:
+            pass
+        # Escape
+        if event.key() == Qt.Key.Key_Escape:
+            self.Selection_Clear()
+            self.update()
+        # Delete
+        if event.key() == Qt.Key.Key_Delete:
+            selection = list()
+            for i in range( 0, self.pin_count ):
+                if self.pin_list[i]["select"] == True:
+                    selection.append( self.pin_list[i] )
+            self.Relative_Delete( selection )
+            self.update()
+        # Pack
+        if event.key() == Qt.Key.Key_P:
+            self.Packer_Process( "GRID" )
+    def keyReleaseEvent( self, event ):
+        # Space
+        if event.key() == Qt.Key.Key_Space:
+            auto = event.isAutoRepeat()
+            if auto == False:
+                pass
+        # Escape
+        if event.key() == Qt.Key.Key_Escape:
+            pass
+        # Delete
+        if event.key() == Qt.Key.Key_Delete:
+            pass
     # Widget Events
     def showEvent( self, event ):
         pass
@@ -4206,11 +5700,10 @@ class ImagineBoard_Reference( QWidget ):
         # Database
         self.Database_Close()
         # Qthread
-        if self.thread_packer.isRunning():
-            self.thread_packer.quit()
+        try:self.packer_qthread.quit()
+        except:pass
         # Garbage
-        del self.thread_packer
-        del self.worker_packer
+        self.Garbage_Clean()
     # Painter Event
     def paintEvent( self, event ):
         # Variables
@@ -4218,32 +5711,24 @@ class ImagineBoard_Reference( QWidget ):
         hh = self.hh
         w2 = self.w2
         h2 = self.h2
-        if ww < hh:
-            side = ww
-        else:
-            side = hh
+        side = min( ww, hh )
         self.pin_count = len( self.pin_list )
 
         # Painter
         painter = QPainter( self )
         painter.setRenderHint( QtGui.QPainter.Antialiasing, True )
 
-        # Background Hover
-        painter.setPen( QtCore.Qt.NoPen )
-        painter.setBrush( QBrush( self.color_alpha ) )
-        painter.drawRect( 0, 0, ww, hh )
-
         # Mask
         painter.setClipRect( QRect( int( 0 ), int( 0 ), int( ww ), int( hh ) ), Qt.ReplaceClip )
 
         """
         # Board Scalling
-        painter.setPen( QPen( self.color_1, 1, Qt.SolidLine ) )
+        painter.setPen( QPen( self.c_lite, 1, Qt.SolidLine ) )
         painter.setBrush( QtCore.Qt.NoBrush )
-        dl = w2 - w2 * self.cz
-        dt = h2 - h2 * self.cz
-        dw = ww * self.cz
-        dh = hh * self.cz
+        dl = w2 - w2 * self.cam_z
+        dt = h2 - h2 * self.cam_z
+        dw = ww * self.cam_z
+        dh = hh * self.cam_z
         dr = dl + dw
         db = dt + dh
         painter.drawRect( int(dl), int(dt), int(dw), int(dh) )
@@ -4252,8 +5737,25 @@ class ImagineBoard_Reference( QWidget ):
         # Board
         if self.state_press == False:
             painter.setPen( QtCore.Qt.NoPen )
-            painter.setBrush( QBrush( self.color_shade ) )
+            painter.setBrush( QBrush( color_alpha ) )
             painter.drawRect( int( self.board_l ), int( self.board_t ), int( self.board_w ), int( self.board_h ) )
+        # No References Square
+        if ( self.pin_count == 0 and self.drop == False ):
+            painter.setPen( QtCore.Qt.NoPen )
+            painter.setBrush( QBrush( self.c_dark ) )
+            nrs = 0.2 * side
+            nrwm = int( w2 - nrs )
+            nrwp = int( w2 + nrs )
+            nrhm = int( h2 - nrs )
+            nrhp = int( h2 + nrs )
+            poly_quad = QPolygon( [
+                QPoint( nrwm, nrhm ),
+                QPoint( nrwp, nrhm ),
+                QPoint( nrwp, nrhp ),
+                QPoint( nrwm, nrhp ),
+                ] )
+            painter.drawPolygon( poly_quad )
+
         # Lost Pins
         if ( self.state_press == False and self.pin_count > 0 ):
             valid = ( self.board_l >= ww ) or ( self.board_r <= 0 ) or ( self.board_t >= hh ) or ( self.board_b <= 0 )
@@ -4263,28 +5765,13 @@ class ImagineBoard_Reference( QWidget ):
                 bh2 = self.board_t + self.board_h * 0.5
                 dot = 5
                 # Line
-                painter.setPen( QPen( self.color_1, 2, Qt.SolidLine ) )
+                painter.setPen( QPen( self.c_lite, 2, Qt.SolidLine ) )
                 painter.setBrush( QtCore.Qt.NoBrush )
                 painter.drawLine( int( w2 ), int( h2 ), int( bw2 ), int( bh2 ) )
                 # Dot
                 painter.setPen( QtCore.Qt.NoPen )
-                painter.setBrush( QBrush( self.color_1 ) )
+                painter.setBrush( QBrush( self.c_lite ) )
                 painter.drawEllipse( int( w2 - dot ), int( h2 - dot ), int( dot * 2 ), int( dot * 2 ) )
-
-        # No References Square
-        if ( self.pin_count == 0 and self.drop == False ):
-            painter.setPen( QtCore.Qt.NoPen )
-            if self.file_path == "":
-                painter.setBrush( QBrush( self.color_2 ) )
-            else:
-                painter.setBrush( QBrush( self.color_1 ) )
-            poly_quad = QPolygon( [
-                QPoint( int( w2 - ( 0.2 * side ) ), int( h2 - ( 0.2 * side ) ) ),
-                QPoint( int( w2 + ( 0.2 * side ) ), int( h2 - ( 0.2 * side ) ) ),
-                QPoint( int( w2 + ( 0.2 * side ) ), int( h2 + ( 0.2 * side ) ) ),
-                QPoint( int( w2 - ( 0.2 * side ) ), int( h2 + ( 0.2 * side ) ) ),
-                ] )
-            painter.drawPolygon( poly_quad )
 
         # Render State
         self.Board_Render()
@@ -4306,8 +5793,8 @@ class ImagineBoard_Reference( QWidget ):
 
                     # Image
                     if ( pack == True or draw == None ):
-                        painter.setPen( QPen( self.color_1, 1, Qt.SolidLine ) )
-                        painter.setBrush( QBrush( self.color_2 ) )
+                        painter.setPen( QPen( self.c_lite, 1, Qt.SolidLine ) )
+                        painter.setBrush( QBrush( self.c_dark ) )
                         painter.drawRect( int( dl ), int( dt ), int( dw ), int( dh ) )
                     else:
                         painter.setPen( QtCore.Qt.NoPen )
@@ -4322,7 +5809,7 @@ class ImagineBoard_Reference( QWidget ):
                     pen = self.pin_list[i]["pen"]
                     bg = self.pin_list[i]["bg"]
 
-                    letter_size = int( letter * self.cz )
+                    letter_size = int( letter * self.cam_z )
                     if letter_size > 0:
                         # Bounding Box
                         box = QRect( int( dl ), int( dt ), int( dw ), int( dh ) )
@@ -4336,7 +5823,7 @@ class ImagineBoard_Reference( QWidget ):
                         qfont = QFont( font )
                         qfont.setPointSizeF( letter_size )
                         painter.setFont( qfont )
-                        painter.drawText( box, Qt.AlignCenter, text )
+                        painter.drawText( box, QtCore.Qt.AlignCenter|QtCore.Qt.TextWordWrap, text )
                         # Garbage
                         del qfont
 
@@ -4345,11 +5832,11 @@ class ImagineBoard_Reference( QWidget ):
             # Dots Over
             if ( self.select_box == True or self.state_select == True ):
                 # Variables
-                sel_hor = []
-                sel_ver = []
+                sel_hor = list()
+                sel_ver = list()
                 # Painter
                 painter.setPen( QtCore.Qt.NoPen )
-                painter.setBrush( QBrush( self.color_1, Qt.Dense6Pattern ) )
+                painter.setBrush( QBrush( self.c_select, Qt.Dense4Pattern ) )
                 # Items
                 for i in range( 0, self.pin_count ):
                     render = self.pin_list[i]["render"]
@@ -4362,7 +5849,7 @@ class ImagineBoard_Reference( QWidget ):
                             sel_hor.extend( [ dl, dr ] )
                             sel_ver.extend( [ dt, db ] )
                 # Selection Square
-                painter.setPen( QPen( self.color_1, 1, Qt.SolidLine ) )
+                painter.setPen( QPen( self.c_select, 1, Qt.SolidLine ) )
                 painter.setBrush( QtCore.Qt.NoBrush )
                 if ( len( sel_hor ) > 0 and len( sel_ver ) > 0 ):
                     min_x = min( sel_hor )
@@ -4382,7 +5869,7 @@ class ImagineBoard_Reference( QWidget ):
                 line = 200
 
                 # Bounding Box
-                painter.setPen( QPen( self.color_2, 1, Qt.SolidLine ) )
+                painter.setPen( QPen( self.c_dark, 1, Qt.SolidLine ) )
                 painter.setBrush( QtCore.Qt.NoBrush )
                 painter.drawRect( int( dl ), int( dt ), int( dw ), int( dh ) )
 
@@ -4391,11 +5878,10 @@ class ImagineBoard_Reference( QWidget ):
                 if ( ww > min_tri and hh > min_tri ):
                     # Variables
                     tri = 10
+                    painter.setPen( QPen( color_black, 1, Qt.SolidLine ) )
                     # Scale 1
-                    if self.pin_node == 1:
-                        painter.setBrush( QBrush( self.color_blue, Qt.SolidPattern ) )
-                    else:
-                        painter.setBrush( QBrush( self.color_1, Qt.SolidPattern ) )
+                    if self.pin_node == 1:  painter.setBrush( QBrush( self.c_chrome, Qt.SolidPattern ) )
+                    else:                   painter.setBrush( QBrush( color_white, Qt.SolidPattern ) )
                     poly_t1 = QPolygon( [
                         QPoint( int( dl ),       int( dt ) ),
                         QPoint( int( dl + tri ), int( dt ) ),
@@ -4403,10 +5889,8 @@ class ImagineBoard_Reference( QWidget ):
                         ] )
                     painter.drawPolygon( poly_t1 )
                     # scale 3
-                    if self.pin_node == 3:
-                        painter.setBrush( QBrush( self.color_blue, Qt.SolidPattern ) )
-                    else:
-                        painter.setBrush( QBrush( self.color_1, Qt.SolidPattern ) )
+                    if self.pin_node == 3:  painter.setBrush( QBrush( self.c_chrome, Qt.SolidPattern ) )
+                    else:                   painter.setBrush( QBrush( color_white, Qt.SolidPattern ) )
                     poly_t3 = QPolygon( [
                         QPoint( int( dr ),       int( dt ) ),
                         QPoint( int( dr ),       int( dt + tri ) ),
@@ -4414,10 +5898,8 @@ class ImagineBoard_Reference( QWidget ):
                         ] )
                     painter.drawPolygon( poly_t3 )
                     # Scale 7
-                    if self.pin_node == 7:
-                        painter.setBrush( QBrush( self.color_blue, Qt.SolidPattern ) )
-                    else:
-                        painter.setBrush( QBrush( self.color_1, Qt.SolidPattern ) )
+                    if self.pin_node == 7:  painter.setBrush( QBrush( self.c_chrome, Qt.SolidPattern ) )
+                    else:                   painter.setBrush( QBrush( color_white, Qt.SolidPattern ) )
                     poly_t7 = QPolygon( [
                         QPoint( int( dl ),       int( db ) ),
                         QPoint( int( dl ),       int( db - tri ) ),
@@ -4425,10 +5907,8 @@ class ImagineBoard_Reference( QWidget ):
                         ] )
                     painter.drawPolygon( poly_t7 )
                     # Scale 9
-                    if self.pin_node == 9:
-                        painter.setBrush( QBrush( self.color_blue, Qt.SolidPattern ) )
-                    else:
-                        painter.setBrush( QBrush( self.color_1, Qt.SolidPattern ) )
+                    if self.pin_node == 9:  painter.setBrush( QBrush( self.c_chrome, Qt.SolidPattern ) )
+                    else:                   painter.setBrush( QBrush( color_white, Qt.SolidPattern ) )
                     poly_t9 = QPolygon( [
                         QPoint( int( dr ),       int( db ) ),
                         QPoint( int( dr - tri ), int( db ) ),
@@ -4441,11 +5921,10 @@ class ImagineBoard_Reference( QWidget ):
                 if ( ww > min_sq and hh > min_sq ):
                     # Variables
                     sq = 5
+                    painter.setPen( QPen( color_black, 1, Qt.SolidLine ) )
                     # Clip 2
-                    if self.pin_node == 2:
-                        painter.setBrush( QBrush( self.color_blue, Qt.SolidPattern ) )
-                    else:
-                        painter.setBrush( QBrush( self.color_1, Qt.SolidPattern ) )
+                    if self.pin_node == 2:  painter.setBrush( QBrush( self.c_chrome, Qt.SolidPattern ) )
+                    else:                   painter.setBrush( QBrush( color_white, Qt.SolidPattern ) )
                     poly_s2 = QPolygon( [
                         QPoint( int( dl + dw2 - sq ), int( dt ) ),
                         QPoint( int( dl + dw2 - sq ), int( dt + sq ) ),
@@ -4454,10 +5933,8 @@ class ImagineBoard_Reference( QWidget ):
                         ] )
                     painter.drawPolygon( poly_s2 )
                     # Clip 4
-                    if self.pin_node == 4:
-                        painter.setBrush( QBrush( self.color_blue, Qt.SolidPattern ) )
-                    else:
-                        painter.setBrush( QBrush( self.color_1, Qt.SolidPattern ) )
+                    if self.pin_node == 4:  painter.setBrush( QBrush( self.c_chrome, Qt.SolidPattern ) )
+                    else:                   painter.setBrush( QBrush( color_white, Qt.SolidPattern ) )
                     poly_s4 = QPolygon( [
                         QPoint( int( dl ),      int( dt + dh2 - sq ) ),
                         QPoint( int( dl + sq ), int( dt + dh2 - sq ) ),
@@ -4466,10 +5943,8 @@ class ImagineBoard_Reference( QWidget ):
                         ] )
                     painter.drawPolygon( poly_s4 )
                     # Clip 6
-                    if self.pin_node == 6:
-                        painter.setBrush( QBrush( self.color_blue, Qt.SolidPattern ) )
-                    else:
-                        painter.setBrush( QBrush( self.color_1, Qt.SolidPattern ) )
+                    if self.pin_node == 6:  painter.setBrush( QBrush( self.c_chrome, Qt.SolidPattern ) )
+                    else:                   painter.setBrush( QBrush( color_white, Qt.SolidPattern ) )
                     poly_s6 = QPolygon( [
                         QPoint( int( dr ),      int( dt + dh2 - sq ) ),
                         QPoint( int( dr - sq ), int( dt + dh2 - sq ) ),
@@ -4478,10 +5953,8 @@ class ImagineBoard_Reference( QWidget ):
                         ] )
                     painter.drawPolygon( poly_s6 )
                     # Clip 8
-                    if self.pin_node == 8:
-                        painter.setBrush( QBrush( self.color_blue, Qt.SolidPattern ) )
-                    else:
-                        painter.setBrush( QBrush( self.color_1, Qt.SolidPattern ) )
+                    if self.pin_node == 8:  painter.setBrush( QBrush( self.c_chrome, Qt.SolidPattern ) )
+                    else:                   painter.setBrush( QBrush( color_white, Qt.SolidPattern ) )
                     poly_s8 = QPolygon( [
                         QPoint( int( dl + dw2 - sq ), int( db ) ),
                         QPoint( int( dl + dw2 - sq ), int( db - sq ) ),
@@ -4499,24 +5972,25 @@ class ImagineBoard_Reference( QWidget ):
                         # Lines
                         cir_x, cir_y = Trig_2D_Points_Rotate( dl + dw2 , dt + dh2, line, Limit_Looper( trz + 90, 360 ) )
                         neu_x, neu_y = Trig_2D_Points_Rotate( dl + dw2 , dt + dh2, line, Limit_Looper( 90, 360 ) )
-                        painter.setPen( QPen( self.color_2, 4, Qt.SolidLine ) )
+                        painter.setPen( QPen( color_black, 4, Qt.SolidLine ) )
                         painter.drawLine( int( dl + dw2 ), int( dt + dh2 ), int( cir_x ), int( cir_y ) )
                         painter.drawLine( int( dl + dw2 ), int( dt + dh2 ), int( neu_x ), int( neu_y ) )
-                        painter.setPen( QPen( self.color_1, 2, Qt.SolidLine ) )
+                        painter.setPen( QPen( color_white, 2, Qt.SolidLine ) )
                         painter.drawLine( int( dl + dw2 ), int( dt + dh2 ), int( cir_x ), int( cir_y ) )
                         painter.drawLine( int( dl + dw2 ), int( dt + dh2 ), int( neu_x ), int( neu_y ) )
                         # Circle
-                        painter.setPen( QPen( self.color_2, 1, Qt.SolidLine ) )
-                        painter.setBrush( QBrush( self.color_blue, Qt.SolidPattern ) )
+                        painter.setPen( QPen( color_black, 1, Qt.SolidLine ) )
+                        painter.setBrush( QBrush( self.c_chrome, Qt.SolidPattern ) )
                         painter.drawEllipse( int( dl + dw2 - cir ), int( dt + dh2 - cir ), int( 2 * cir ), int( 2 * cir ) )
                     else:
-                        painter.setBrush( QBrush( self.color_1, Qt.SolidPattern ) )
+                        painter.setPen( QPen( color_black, 1, Qt.SolidLine ) )
+                        painter.setBrush( QBrush( color_white, Qt.SolidPattern ) )
                         painter.drawEllipse( int( dl + dw2 - cir ), int( dt + dh2 - cir ), int( 2 * cir ), int( 2 * cir ) )
 
         # Cursor Selection Square
         if ( self.state_press == True and self.select_box == True and self.state_pack == False ):
-            painter.setPen( QPen( self.color_1, 2, Qt.SolidLine ) )
-            painter.setBrush( QBrush( self.color_1, Qt.Dense7Pattern ) )
+            painter.setPen( QPen( self.c_chrome, 2, Qt.SolidLine ) )
+            painter.setBrush( QBrush( self.c_chrome, Qt.Dense7Pattern ) )
             sx = min( self.ox, self.ex )
             sy = min( self.oy, self.ey )
             sw = abs( self.ex - self.ox )
@@ -4527,7 +6001,7 @@ class ImagineBoard_Reference( QWidget ):
         if self.pin_preview != None:
             # Back Drop
             painter.setPen( QtCore.Qt.NoPen )
-            painter.setBrush( QBrush( self.color_backdrop ) )
+            painter.setBrush( QBrush( color_alpha ) )
             painter.drawRect( 0, 0, ww, hh )
             # Pin Preview
             painter.setPen( QtCore.Qt.NoPen )
@@ -4543,34 +6017,34 @@ class ImagineBoard_Reference( QWidget ):
 
         # Drag and Drop Triangle
         if ( self.drop == True and self.drag == False ):
-            if self.state_locked == False:
-                Painter_Triangle( self, painter, w2, h2, side )
-            elif self.state_locked == True:
-                Painter_Locked( self, painter, w2, h2, side )
+            if self.state_lock == False:
+                Painter_Triangle( painter, w2, h2, side, self.c_chrome )
+            elif self.state_lock == True:
+                Painter_Locked( painter, w2, h2, side, self.c_chrome )
 
         """
         # Packing Points
         v = 255
-        dot = 20 * self.cz
-        painter.setPen( QPen( self.color_2, 2, Qt.SolidLine, Qt.SquareCap, Qt.MiterJoin ) )
+        dot = 20 * self.cam_z
+        painter.setPen( QPen( self.c_dark, 2, Qt.SolidLine, Qt.SquareCap, Qt.MiterJoin ) )
         for item in self.p:
-            px = w2 + ( item[0] - w2 ) * self.cz
-            py = h2 + ( item[1] - h2 ) * self.cz
+            px = w2 + ( item[0] - w2 ) * self.cam_z
+            py = h2 + ( item[1] - h2 ) * self.cam_z
             valid = item[2]
             if valid == True:
                 painter.setBrush( QBrush( QColor( 0, v, 0 ) ) )
             elif valid == False:
                 painter.setBrush( QBrush( QColor( v, 0, 0 ) ) )
             elif valid == None:
-                painter.setBrush( QBrush( self.color_1 ) )
+                painter.setBrush( QBrush( self.c_lite ) )
             painter.drawEllipse( int( px - dot ), int( py - dot ), int( dot * 2 ), int( dot * 2 ) )
 
             # # Point location Text
             # painter.setBrush( QtCore.Qt.NoBrush )
-            # painter.setPen( QPen( QColor( self.color_1 ), 1, Qt.SolidLine ) )
-            # qfont = QFont( self.label_font, int( 8 * self.cz ) )
+            # painter.setPen( QPen( QColor( self.c_lite ), 1, Qt.SolidLine ) )
+            # qfont = QFont( self.label_font, int( 8 * self.cam_z ) )
             # painter.setFont( qfont )
-            # box = QRect( int( px ), int( py ), int( 100*self.cz ), int( 20*self.cz ) )
+            # box = QRect( int( px ), int( py ), int( 100*self.cam_z ), int( 20*self.cam_z ) )
             # text = f"( {item[0]} , {item[1]} )"
             # painter.drawText( box, Qt.AlignCenter, text )
             # # Garbage
@@ -4580,26 +6054,64 @@ class ImagineBoard_Reference( QWidget ):
 #endregion
 #region Threads
 
-class Worker_Packer( QObject ):
+# Grid
+class Worker_Reader( QtCore.QObject ):
+    GRID_READER = QtCore.pyqtSignal( int, list, float )
+
+    def run( self, source, index, grid_url, gtw, gth, state_fit, grid_method ):
+        # Variables
+        qpixmap = None
+        size = 0
+        # File
+        if os.path.isfile( grid_url ) == True:
+            # Reader
+            reader = QImageReader( grid_url )
+            check_read = reader.canRead()
+            check_anim = reader.supportsAnimation()
+            check_comp = zipfile.is_zipfile( grid_url )
+            if check_read == True and check_comp == False:
+                # Static
+                if check_anim == False:
+                    qpixmap, size = Fit_Image( reader, gtw, gth, state_fit )
+                # Animation
+                elif check_anim == True:
+                    qpixmap, size = Fit_Image( reader, gtw, gth, state_fit )
+            # Compressed
+            elif check_comp == True:
+                qpixmap, size = Fit_Compressed( grid_url, gtw, gth, state_fit )
+        # Directory
+        elif os.path.isdir( grid_url ) == True:
+            qpixmap, size = Fit_Directory( grid_url, gtw, gth )
+        # HTML
+        elif Check_Html( grid_url ) == True:
+            qpixmap = Download_QPixmap( grid_url )
+            if qpixmap != None:
+                qpixmap, size = Fit_QPixmap( qpixmap, gtw, gth, state_fit, grid_method )
+        # Return
+        self.GRID_READER.emit( index, [qpixmap], size )
+
+# Reference
+class Worker_Packer( QtCore.QObject ):
+    PACKER_CYCLE = QtCore.pyqtSignal( bool )
+    PACKER_PB_VALUE = QtCore.pyqtSignal( int )
+    PACKER_PB_MAX = QtCore.pyqtSignal( int )
+    PACKER_FINISH = QtCore.pyqtSignal( bool )
 
     # Run Packer
-    def run( self, source, mode, method ):
+    def run( self, source, thread, mode ):
         # Variables
-        self.stop = False
+        self.cycle = False
         pin_list = source.pin_list
         count = len( pin_list )
-
-        # Thread Settings
-        if mode == "THREAD":
-            source.thread_packer.setPriority( QThread.HighestPriority )
+        pack_area = 1
 
         # Time Watcher
         start = QtCore.QDateTime.currentDateTimeUtc()
 
         # List Packs
         perfect_area = 0
-        pack_sort = [] # Yes Packing
-        pack_other = [] # No Packing
+        pack_sort = list() # Yes Packing
+        pack_other = list() # No Packing
         for i in range( 0, count ):
             # Index
             pin_list[i]["index"] = i
@@ -4648,56 +6160,67 @@ class Worker_Packer( QObject ):
         del list_order, reorder
 
         # Progress Bar
-        source.ProgressBar_Maximum( count - 1 )
-        source.ProgressBar_Value( 0 )
+        self.PACKER_PB_MAX.emit( count - 1 )
+        self.PACKER_PB_VALUE.emit( 0 )
 
         # Packing
-        if method in ( "GRID", "ROW", "COLUMN", "PILE" ):
-            pack_area = self.Pack_Linear( source, mode, method, pack_sort, pack_other, pin_list )
-        if method in ( "AREA", "PERIMETER", "RATIO", "CLASS" ):
-            pack_area = self.Pack_Optimal( source, mode, method, pack_sort, pack_other, pin_list )
+        if mode in ( "GRID", "ROW", "COLUMN", "PILE" ):       pack_area = self.Pack_Linear(  source, mode, pack_sort, pack_other, pin_list )
+        if mode in ( "AREA", "PERIMETER", "RATIO", "CLASS" ): pack_area = self.Pack_Optimal( source, mode, pack_sort, pack_other, pin_list )
+        # Efficiency
+        efficiency = round( ( perfect_area / pack_area ) * 100, 3 )
 
         # Progress Bar
-        source.ProgressBar_Maximum( 1 )
-        source.ProgressBar_Value( 0 )
+        self.PACKER_PB_MAX.emit( 1 )
+        self.PACKER_PB_VALUE.emit( 0 )
 
         # Time Watcher
         end = QtCore.QDateTime.currentDateTimeUtc()
         delta = start.msecsTo( end )
         time = QTime( 0,0 ).addMSecs( delta )
 
-        # Efficiency
-        efficiency = round( ( perfect_area / pack_area ) * 100, 3 )
         # Print
-        try:QtCore.qDebug( f"Imagine Board | PACK { time.toString( 'hh:mm:ss.zzz' ) } | COUNT { count } | METHOD { method } | EFFICIENCY { efficiency } %" )
+        string = f"{ DOCKER_NAME } | PACK { time.toString( 'hh:mm:ss.zzz' ) } | COUNT { count } | METHOD { mode } | EFFICIENCY { efficiency } %"
+        try:QtCore.qDebug( string )
         except:pass
 
         # Stop Worker
-        if mode == "SINGLE":source.Packer_Stop()
-        if mode == "THREAD":source.Packer_Thread_Quit()
-    def STOP( self ):
-        self.stop = True
+        self.PACKER_FINISH.emit( thread )
+
+    # Cycle Control
+    def Stop( self ):
+        self.cycle = True
+    def Cycle_Interruption( self, stop ):
+        if stop == True:
+            message = "Continue Packing ?"
+            loop = QMessageBox.question( QWidget(), DOCKER_NAME, message, QMessageBox.Yes, QMessageBox.Abort )
+            if loop == QMessageBox.Yes:
+                self.PACKER_CYCLE.emit( True )
+                stop = False
+            if loop == QMessageBox.Abort:
+                self.PACKER_CYCLE.emit( False )
+                stop = True
+        return stop
 
     # Cycles
-    def Pack_Linear( self, source, mode, method, pack_sort, pack_other, pin_list ):
+    def Pack_Linear( self, source, mode, pack_sort, pack_other, pin_list ):
         # Sorting List
-        if method in ( "GRID", "ROW" ):
+        if mode in ( "GRID", "ROW" ):
             pack_sort = sorted( pack_sort, reverse=True, key=lambda entry:entry["bh"] )
-        if method == "COLUMN":
+        if mode == "COLUMN":
             pack_sort = sorted( pack_sort, reverse=True, key=lambda entry:entry["bw"] )
-        if method == "PILE":
+        if mode == "PILE":
             pack_sort = sorted( pack_sort, reverse=False, key=lambda entry:entry["area"] )
 
         # Starting Points
         start_x = min( self.List_Key( pack_sort, "bl" ) )
         start_y = min( self.List_Key( pack_sort, "bt" ) )
-        if method == "GRID":
+        if mode == "GRID":
             total_area = 0
             for i in range( 0, len( pack_sort ) ):
                 total_area += pack_sort[i]["area"]
             side = math.sqrt( total_area )
             end_x = start_x + side
-        if method == "PILE":
+        if mode == "PILE":
             lx = max( self.List_Key( pack_sort, "bw" ) )
             ly = max( self.List_Key( pack_sort, "bh" ) )
 
@@ -4705,31 +6228,29 @@ class Worker_Packer( QObject ):
         for s in range( 0, len( pack_sort ) ):
             # Progress Bar
             if s % 5 == 0:
-                source.ProgressBar_Value( s + 1 )
+                self.PACKER_PB_VALUE.emit( s + 1 )
                 QApplication.processEvents()
             # Stop Cycle
-            if self.stop == True:
-                message = "Continue Packing ?"
-                loop = QMessageBox.question( QWidget(), "Imagine Board", message, QMessageBox.Yes, QMessageBox.Abort )
-                if loop == QMessageBox.Abort:
-                    break
-                self.stop = False
+            self.cycle = self.Cycle_Interruption( self.cycle )
+            if self.cycle == True:
+                self.cycle = False
+                break
 
             # Index
             pin_index = pack_sort[s]["index"]
 
             # Calculation
             if s == 0:
-                if method in ( "GRID", "ROW", "COLUMN" ):
+                if mode in ( "GRID", "ROW", "COLUMN" ):
                     px = start_x
                     py = start_y
-                if method == "GRID":
+                if mode == "GRID":
                     above = start_y + pack_sort[s]["bh"]
-                if method == "PILE":
+                if mode == "PILE":
                     px = start_x - pack_sort[s]["bw"] * 0.5 + lx * 0.5
                     py = start_y - pack_sort[s]["bh"] * 0.5 + ly * 0.5
             else:
-                if method == "GRID":
+                if mode == "GRID":
                     if pack_sort[s-1]["br"] >= end_x:
                         px = start_x
                         py = above
@@ -4737,13 +6258,13 @@ class Worker_Packer( QObject ):
                     else:
                         px = pack_sort[s-1]["br"]
                         py = pack_sort[s-1]["bt"]
-                if method == "ROW":
+                if mode == "ROW":
                     px = pack_sort[s-1]["br"]
                     py = pack_sort[s-1]["bt"]
-                if method == "COLUMN":
+                if mode == "COLUMN":
                     px = pack_sort[s-1]["bl"]
                     py = pack_sort[s-1]["bb"]
-                if method == "PILE":
+                if mode == "PILE":
                     px = start_x - pack_sort[s]["bw"] * 0.5 + lx * 0.5
                     py = start_y - pack_sort[s]["bh"] * 0.5 + ly * 0.5
 
@@ -4760,22 +6281,19 @@ class Worker_Packer( QObject ):
         # Finish
         pack_area = self.Report_Area( pack_sort )
         return pack_area
-    def Pack_Optimal( self, source, mode, method, pack_sort, pack_other, pin_list ):
-        # Variables
-        ru = 5
-
+    def Pack_Optimal( self, source, mode, pack_sort, pack_other, pin_list ):
         # Sorting List
-        if method == "AREA":
+        if mode == "AREA":
             pack_sort = sorted( pack_sort, reverse=True, key = lambda entry:entry["area"] )
-        if method == "PERIMETER":
+        if mode == "PERIMETER":
             pack_sort = sorted( pack_sort, reverse=True, key = lambda entry:entry["perimeter"] )
-        if method == "RATIO":
+        if mode == "RATIO":
             pack_sort = sorted( pack_sort, reverse=False, key = lambda entry:entry["ratio"] )
-        if method == "CLASS":
+        if mode == "CLASS":
             # Variables
-            ratio_0 = []
-            ratio_1 = []
-            ratio_2 = []
+            ratio_0 = list()
+            ratio_1 = list()
+            ratio_2 = list()
             # Sorting
             for i in range( 0, len( pack_sort ) ):
                 ratio = pack_sort[i]["ratio"]
@@ -4785,7 +6303,7 @@ class Worker_Packer( QObject ):
                     ratio_1.append( pack_sort[i] )
                 if ratio > 1:
                     ratio_2.append( pack_sort[i] )
-            pack_sort = []
+            pack_sort = list()
             ratio_0 = sorted( ratio_0, reverse=True, key = lambda entry:entry["area"] )
             ratio_1 = sorted( ratio_1, reverse=True, key = lambda entry:entry["area"] )
             ratio_2 = sorted( ratio_2, reverse=True, key = lambda entry:entry["area"] )
@@ -4803,9 +6321,15 @@ class Worker_Packer( QObject ):
         start_y = min( self.List_Key( pack_sort, "bt" ) )
 
         # Reset Location
+        list_bw = list()
+        list_bh = list()
         for s in range( 0, len( pack_sort ) ):
-            ox = start_x - pack_sort[s]["bw"]
-            oy = start_y - pack_sort[s]["bh"]
+            bw = pack_sort[s]["bw"]
+            bh = pack_sort[s]["bh"]
+            ox = start_x - bw
+            oy = start_y - bh
+            list_bw.append( bw )
+            list_bh.append( bh )
             source.Move_Point( pack_sort, s, ox, oy )
             source.Move_Point( pin_list, pack_sort[s]["index"], ox, oy )
         QApplication.processEvents()
@@ -4818,20 +6342,20 @@ class Worker_Packer( QObject ):
         arranged = list()
         extended = list()
         extended.extend( pack_other )
+        mini_bw = min( list_bw )
+        mini_bh = min( list_bh )
 
         # Apply to Sort List
         for s in range( 0, count ):
             # Progress Bar
             if s % 5 == 0:
-                source.ProgressBar_Value( s + 1 )
+                self.PACKER_PB_VALUE.emit( s + 1 )
                 QApplication.processEvents()
             # Stop Cycle
-            if self.stop == True:
-                message = "Continue Packing ?"
-                loop = QMessageBox.question( QWidget(), "Imagine Board", message, QMessageBox.Yes, QMessageBox.Abort )
-                if loop == QMessageBox.Abort:
-                    break
-                self.stop = False
+            self.cycle = self.Cycle_Interruption( self.cycle )
+            if self.cycle == True:
+                self.cycle = False
+                break
 
             # Item
             item = pack_sort[s]
@@ -4865,10 +6389,8 @@ class Worker_Packer( QObject ):
                 end_y = max( self.List_Key( arranged, "bb" ) )
                 delta_x = end_x - start_x
                 delta_y = end_y - start_y
-                if delta_x >= delta_y:
-                    side = delta_x
-                else:
-                    side = delta_y
+                if delta_x >= delta_y:  side = delta_x
+                else:                   side = delta_y
                 margin = 0.1 # enforces square when equal to zero
                 square_x = start_x + side + bw * margin
                 square_y = start_y + side + bh * margin
@@ -4892,7 +6414,7 @@ class Worker_Packer( QObject ):
                         eb = extended[e]["bb"]
 
                         # Overlaps
-                        overlap = (( round(gl,ru) >= round(el,ru) and round(gl,ru) < round(er,ru) ) and ( round(gt,ru) >= round(et,ru) and round(gt,ru) < round(eb,ru) ))
+                        overlap = ( gl >= el and gl < er ) and ( gt >= et and gt < eb )
                         # Logic
                         if overlap == True:
                             valid = False
@@ -4907,17 +6429,22 @@ class Worker_Packer( QObject ):
                             eb = extended[e]["bb"]
 
                             # Test Fit
-                            fit = ( round(gl,ru) < round(er,ru) and round(gr,ru) > round(el,ru) ) and ( round(gt,ru) < round(eb,ru) and round(gb,ru) > round(et,ru) )
+                            fit = ( gl < er and gr > el ) and ( gt < eb and gb > et )
                             # Square Shape
-                            if delta_x >= delta_y:square = gr >= square_x
-                            else:square = gb >= square_y
+                            if delta_x >= delta_y:
+                                square = gr >= square_x
+                            else:
+                                square = gb >= square_y
                             # Contact is Valid
-                            cl = ( round(gl,ru) == round(er,ru) ) and ( round(gt,ru) <= round(eb,ru) and round(gb,ru) >= round(et,ru) )
-                            ct = ( round(gt,ru) == round(eb,ru) ) and ( round(gl,ru) <= round(er,ru) and round(gr,ru) >= round(el,ru) )
+                            cl = ( gl == er ) and ( gt <= eb and gb >= et )
+                            ct = ( gt == eb ) and ( gl <= er and gr >= el )
                             contact = cl == True or ct == True
+                            # Eliminate Small Gaps
+                            sgx = fit == True and el >= gl and ( ( el - gl ) < mini_bw )
+                            sgy = fit == True and et >= gt and ( ( et - gt ) < mini_bh )
 
                             # Logic
-                            if fit == True or square == True:
+                            if fit == True or square == True or sgx == True or sgy == True:
                                 valid = None
                                 break
                             if contact == True:
@@ -4979,8 +6506,8 @@ class Worker_Packer( QObject ):
                     px = grid_points[index][0]
                     py = grid_points[index][1]
                 else:
-                    self.stop = True
-                    QMessageBox.information( QWidget(), i18n( "Warnning" ), i18n( "Imagine Board | ERROR packer cycle" ) )
+                    self.cycle = True
+                    QMessageBox.information( QWidget(), i18n( "Warnning" ), i18n( f"{ DOCKER_NAME } | ERROR packer cycle" ) )
 
                 # Garbage
                 del control, sort
@@ -5000,7 +6527,7 @@ class Worker_Packer( QObject ):
                 points_y = [ start_y ]
                 points_x.extend( self.List_Key( extended, "br" ) )
                 points_y.extend( self.List_Key( extended, "bb" ) )
-                grid_points = self.Extra_Points( gl, gr, gt, gb, arranged, grid_points, start_x, start_y, source )
+                grid_points = self.Extra_Points( gl, gr, gt, gb, arranged, grid_points, start_x, start_y )
                 del points_x, points_y
 
             # Deleted Invalid Grid Points
@@ -5065,7 +6592,7 @@ class Worker_Packer( QObject ):
         area = w * h
         # Return
         return area
-    def Extra_Points( self, gl, gr, gt, gb, arranged, grid_points, start_x, start_y, source ):
+    def Extra_Points( self, gl, gr, gt, gb, arranged, grid_points, start_x, start_y ):
         # Variables
         pl = list(); pr = list(); pt = list(); pb = list()
         sw = list(); sh = list()
@@ -5194,398 +6721,127 @@ class Worker_Packer( QObject ):
         return boolean
 
 #endregion
-#region Color Picker
+#region Widgets
 
-class Picker_Block( QWidget ):
-    SIGNAL_COLOR = QtCore.pyqtSignal( [ QColor ] )
-
-    # Init
-    def __init__( self, parent ):
-        super( Picker_Block, self ).__init__( parent )
-        self.Variables()
-    def Variables( self ):
-        self.ww = 20
-        self.hh = 20
-        self.qcolor = QColor( 0, 0, 0 )
-    def sizeHint( self ):
-        return QtCore.QSize( 50, 50 )
-
-    # Relay
-    def Set_Size( self, ww, hh ):
-        self.ww = ww
-        self.hh =  hh
-        self.update()
-    def Set_Color( self, qcolor ):
-        self.qcolor = qcolor
-        self.update()
-
-    # Mouse Events
-    def mousePressEvent( self, event ):
-        self.SIGNAL_COLOR.emit( self.qcolor )
-
-    # Painter
-    def paintEvent( self, event ):
-        # Painter
-        painter = QPainter( self )
-        painter.setRenderHint( QtGui.QPainter.Antialiasing, True )
-
-        # Background Hover
-        r = 5
-        painter.setPen( QtCore.Qt.NoPen )
-        painter.setBrush( QBrush( self.qcolor ) )
-        painter.drawRoundedRect( int( 0 ), int( 0 ), int( self.ww ), int( self.hh ), r, r )
-
-class Picker_Color_HUE( QWidget ):
-    SIGNAL_COLOR = QtCore.pyqtSignal( [ QColor ] )
+class List_Data( QtWidgets.QListWidget ):
+    LIST_URL = QtCore.pyqtSignal( list )
+    LIST_FILES = QtCore.pyqtSignal()
+    LIST_REMOVE = QtCore.pyqtSignal()
+    LIST_CLEAR = QtCore.pyqtSignal()
 
     # Init
-    def __init__( self, parent ):
-        super( Picker_Color_HUE, self ).__init__( parent )
-        self.Variables()
-    def Variables( self ):
-        # Widget
-        self.ww = 200
-        self.hh = 50
+    def __init__( self, parent=None ):
+        super( List_Data, self ).__init__( parent )
 
-        # Event
-        self.ex = 0
-
-        # Colors
-        self.hsv_1 = 0 # 0-1
-        self.hsv_2 = 0 # 0-1
-        self.hsv_3 = 0 # 0-1
-    def sizeHint( self ):
-        return QtCore.QSize( 200, 50 )
-
-    # Relay
-    def Set_Color( self, qcolor ):
-        # Parse
-        self.hsv_1 = qcolor.hsvHueF()
-        self.hsv_2 = qcolor.hsvSaturationF()
-        self.hsv_3 = qcolor.valueF()
-        # Cursor
-        self.ex = self.hsv_1 * self.ww
-        # Update
-        self.update()
-
-    # Mouse Events
-    def mousePressEvent( self, event ):
-        # Event
-        ex = event.x()
-        self.Press_Color( ex )
-        # Update
-        self.update()
-    def mouseMoveEvent( self, event ):
-        # Event
-        ex = event.x()
-        self.Press_Color( ex )
-        # Update
-        self.update()
-    def mouseDoubleClickEvent( self, event ):
-        # Event
-        ex = event.x()
-        self.Press_Color( ex )
-        # Update
-        self.update()
-    def mouseReleaseEvent( self, event ):
-        pass
-    def Press_Color( self, ex ):
-        # Event
-        self.ex = Limit_Looper( ex, self.ww )
-        # Saturation and Value
-        self.hsv_1 = self.ex / self.ww
-        # Emition
-        qcolor = QColor().fromHsvF( self.hsv_1, self.hsv_2, self.hsv_3 )
-        self.SIGNAL_COLOR.emit( qcolor )
-
-    # Painter
-    def paintEvent( self, event ):
-        # Variables
-        ex = int( self.ex )
-        ww = int( self.ww )
-        hh = int( self.hh )
-        qrect = QRect( -1, -1, ww+2, hh+2 )
-
-        # Painter
-        painter = QPainter( self )
-        painter.setRenderHint( QtGui.QPainter.Antialiasing, True )
-
-        # Gradient Rainbow
-        cor = QLinearGradient( 0, 0, ww+1, 0 )
-        cor.setColorAt( 0/6, Qt.red ) # Red
-        cor.setColorAt( 1/6, Qt.yellow ) # Yellow
-        cor.setColorAt( 2/6, Qt.green ) # Green
-        cor.setColorAt( 3/6, Qt.cyan ) # Cyan
-        cor.setColorAt( 4/6, Qt.blue ) # Blue
-        cor.setColorAt( 5/6, Qt.magenta ) # Magenta
-        cor.setColorAt( 6/6, Qt.red ) # Color
-        painter.setBrush( QBrush( cor ) )
-        painter.drawRect( qrect )
-
-        # Cursor
-        cb = 3
-        cbx = ex - cb
-        cbw = 2 * cb
-        cw = 1
-        cwx = ex - cw
-        cww = 2 * cw
-        # Black Square
-        painter.setPen( QtCore.Qt.NoPen )
-        painter.setBrush( QBrush( Qt.black ) )
-        painter.drawRect( cbx, 0, cbw, hh )
-        # White Square
-        painter.setPen( QtCore.Qt.NoPen )
-        painter.setBrush( QBrush( Qt.white ) )
-        painter.drawRect( cwx, 0, cww, hh )
-
-        # Finish QPainter
-        painter.end()
-
-class Picker_Color_HSV( QWidget ):
-    SIGNAL_COLOR = QtCore.pyqtSignal( [ QColor ] )
-
-    # Init
-    def __init__( self, parent ):
-        super( Picker_Color_HSV, self ).__init__( parent )
-        self.Variables()
-    def Variables( self ):
-        # Widget
-        self.ww = 200
-        self.hh = 200
-
-        # Event
-        self.ex = 0
-        self.ey = 0
-
-        # Colors
-        self.hue = QColor( 255, 0, 0 )
-        self.hsv_1 = 0 # 0-1
-        self.hsv_2 = 0 # 0-1
-        self.hsv_3 = 0 # 0-1
-    def sizeHint( self ):
-        return QtCore.QSize( 200, 200 )
-
-    # Relay
-    def Set_Color( self, qcolor ):
-        # Parse
-        hsv_1 = qcolor.hsvHueF()
-        self.hsv_2 = qcolor.hsvSaturationF()
-        self.hsv_3 = qcolor.valueF()
-        # Hue
-        hue = QColor().fromHsvF( hsv_1, 1, 1 )
-        if self.hsv_2 != 0:
-            self.hsv_1 = hsv_1
-            self.hue = hue
-        # Cursor
-        self.ex = self.hsv_2 * self.ww
-        self.ey = ( 1 - self.hsv_3 ) * self.hh
-        # Update
-        self.update()
-
-    # Mouse Events
-    def mousePressEvent( self, event ):
-        # Event
-        ex = event.x()
-        ey = event.y()
-        self.Press_Color( ex, ey )
-        # Update
-        self.update()
-    def mouseMoveEvent( self, event ):
-        # Event
-        ex = event.x()
-        ey = event.y()
-        self.Press_Color( ex, ey )
-        # Update
-        self.update()
-    def mouseDoubleClickEvent( self, event ):
-        # Event
-        ex = event.x()
-        ey = event.y()
-        self.Press_Color( ex, ey )
-        # Update
-        self.update()
-    def mouseReleaseEvent( self, event ):
-        pass
-    def Press_Color( self, ex, ey ):
-        # Event
-        self.ex = Limit_Range( ex, 0, self.ww )
-        self.ey = Limit_Range( ey, 0, self.hh )
-        # Saturation and Value
-        self.hsv_2 = self.ex / self.ww
-        self.hsv_3 = ( self.hh - self.ey ) / self.hh
-        # Emition
-        qcolor = QColor().fromHsvF( self.hsv_1, self.hsv_2, self.hsv_3 )
-        self.SIGNAL_COLOR.emit( qcolor )
-
-    # Painter
-    def paintEvent( self, event ):
-        # Variables
-        ex = self.ex
-        ey = self.ey
-        ww = self.ww
-        hh = self.hh
-        qrect = QRect( -1, -1, ww+2, hh+2 )
-
-        # Painter
-        painter = QPainter( self )
-        painter.setRenderHint( QtGui.QPainter.Antialiasing, True )
-
-        # Gradient Color
-        cor = QLinearGradient( 0, 0, ww+1, 0 )
-        cor.setColorAt( 0.000, Qt.white ) # White
-        cor.setColorAt( 1.000, self.hue ) # Color
-        painter.setBrush( QBrush( cor ) )
-        painter.drawRect( qrect )
-        # Gradient BW
-        painter.setCompositionMode( QPainter.CompositionMode_Multiply )
-        bw = QLinearGradient( 0, 0, 0, hh+1 )
-        bw.setColorAt( 0.000, Qt.white ) # White Invisiable
-        bw.setColorAt( 1.000, Qt.black ) # Black
-        painter.setBrush( QBrush( bw ) )
-        painter.drawRect( qrect )
-
-        # Compositor Reset
-        painter.setCompositionMode( QPainter.CompositionMode_SourceOver )
-
-        # Cursor
-        size = 10
-        w = 2
-        circle = QRectF(
-            int( ex - size ),
-            int( ey - size ),
-            int( size * 2 ),
-            int( size * 2 ),
-            )
-        # Mask
-        mask = QPainterPath()
-        mask.addEllipse( circle )
-        mask.addEllipse( 
-            int( ex - size + w * 2 ),
-            int( ey - size + w * 2 ),
-            int( size * 2 - w * 4 ),
-            int( size * 2 - w * 4 ),
-            )
-        painter.setClipPath( mask )
-        # Black Circle
-        painter.setPen( QtCore.Qt.NoPen )
-        painter.setBrush( QBrush( Qt.black ) )
-        painter.drawEllipse( circle )
-        # White Circle
-        painter.setPen( QtCore.Qt.NoPen )
-        painter.setBrush( QBrush( Qt.white ) )
-        painter.drawEllipse( 
-            int( ex - size + w ),
-            int( ey - size + w ),
-            int( size * 2 - w * 2 ),
-            int( size * 2 - w * 2 ),
-            )
-
-        # Finish QPainter
-        painter.end()
-
-#endregion
-#region Function
-
-class Function_Process( QWidget ):
-    SIGNAL_DROP = QtCore.pyqtSignal( list )
-
-    # Init
-    def __init__( self, parent ):
-        super( Function_Process, self ).__init__( parent )
-        self.Variables()
-    def Variables( self ):
-        # Widget
-        self.ww = 500
-        self.hh = 500
-        self.w2 = int( self.ww * 0.5 )
-        self.h2 = int( self.hh * 0.5 )
-        self.side = 500
-        # Colors
-        self.color_1 = QColor( "#ffffff" )
-        self.color_2 = QColor( "#000000" )
-        # Drop Event
-        self.setAcceptDrops( True )
-        self.drop = False
-    def sizeHint( self ):
-        return QtCore.QSize( 500, 500 )
-
-    # Relay
-    def Set_Theme( self, color_1, color_2 ):
-        self.color_1 = color_1
-        self.color_2 = color_2
-    def Set_Size( self, ww, hh ):
-        self.ww = ww
-        self.hh = hh
-        self.w2 = ww * 0.5
-        self.h2 = hh * 0.5
-        if ww < hh:
-            self.side = ww
-        else:
-            self.side = hh
-        self.resize( ww, hh )
-
+    # Interaction
     def dragEnterEvent( self, event ):
-        if event.mimeData().hasImage:
-            self.drop = True
+        mime_data, format_id = Insert_Drop( self, event )
+        if len( mime_data ) > 0 or format_id == drag_id:
             event.accept()
         else:
-            event.ignore()
-        self.update()
+            super().dragEnterEvent( event )
     def dragMoveEvent( self, event ):
-        if event.mimeData().hasImage:
-            self.drop = True
+        mime_data, format_id = Insert_Drop( self, event )
+        if len( mime_data ) > 0 or format_id == drag_id:
             event.accept()
         else:
-            event.ignore()
-        self.update()
-    def dragLeaveEvent( self, event ):
-        self.drop = False
-        event.accept()
-        self.update()
+            super().dragMoveEvent( event )
     def dropEvent( self, event ):
-        if event.mimeData().hasImage:
-            if self.drop == True:
-                event.setDropAction( Qt.CopyAction )
-                mime_data = Drop_Inside( self, event, True )
-                self.SIGNAL_DROP.emit( mime_data )
+        mime_data, format_id = Insert_Drop( self, event )
+        if len( mime_data ) > 0 or format_id == drag_id:
+            self.LIST_URL.emit( mime_data )
             event.accept()
         else:
-            event.ignore()
-        self.drop = False
+            super().dropEvent( event )
+
+    # Context Menu
+    def contextMenuEvent( self, event ):
+        # Menu
+        qmenu = QMenu( self )
+        # General
+        action_files = qmenu.addAction( "Add Files" )
+        action_remove = qmenu.addAction( "Remove Selected" )
+        action_clear = qmenu.addAction( "Clear List" )
+
+        # Mapping
+        action = qmenu.exec_( self.mapToGlobal( event.pos() ) )
+        # General
+        if action == action_files:
+            self.LIST_FILES.emit()
+        if action == action_remove:
+            self.LIST_REMOVE.emit()
+        if action == action_clear:
+            self.LIST_CLEAR.emit()
+
+class Drive_TreeView( QtWidgets.QTreeView ):
+
+    # Init
+    def __init__( self, parent ):
+        super( Drive_TreeView, self ).__init__( parent )
+        # Variables
+        self.file_sort = QDir.Name
+
+    # Relay    
+    def Set_File_Sort( self, file_sort ):
+        self.file_sort = file_sort
         self.update()
 
-    # Painter
-    def paintEvent( self, event ):
-        # Variables
-        text = "FUNCTION>>\nDROP IMAGES\nINSIDE BOX\nTO OPERATE"
-        font = "Consolas"
-        letter_size = 10
+    # Interaction
+    def dragEnterEvent( self, event: QDragEnterEvent ):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+    def dragMoveEvent( self, event: QDragEnterEvent ):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+    def dropEvent( self, event: QDropEvent ):
+        if event.mimeData().hasUrls():
+            # Variables
+            model = self.model()
 
-        # Painter
-        painter = QPainter( self )
-        painter.setRenderHint( QtGui.QPainter.Antialiasing, True )
+            # URL
+            url_mime = event.mimeData().urls()[0]
+            url_path = url_mime.toLocalFile()
 
-        # Bounding Box
-        box = QRect( int( 0 ), int( 0 ), int( self.ww ), int( self.hh ) )
+            # Directory Path Construction
+            parent_list = [ os.path.dirname( url_path ) ]
+            for i in range( 0, 50 ):
+                child_item = parent_list[-1]
+                parent_item = os.path.dirname( child_item )
+                if child_item == parent_item:
+                    break
+                parent_list.append( parent_item )
+            parent_list.reverse()
+            parent_list.append( url_path )
 
-        # Background Hover
-        painter.setBrush( QtCore.Qt.NoBrush )
-        painter.setPen( QPen( self.color_1, 1, Qt.DashLine ) )
-        painter.drawRect( box )
+            # Cascate Open Folders
+            for i in range( 0, len( parent_list )-1 ):
+                parent_path = parent_list[i]
+                model_list = self.Dir_Model_Items( model, parent_path )
+                child_item = self.Model_Item_Path( model, parent_list[i+1] )
+                for model_item in model_list:
+                    self.setCurrentIndex( model_item )
+                self.setCurrentIndex( child_item )
+                self.scrollTo( child_item, QAbstractItemView.PositionAtCenter )
 
-        # String
-        painter.setBrush( QtCore.Qt.NoBrush )
-        painter.setPen( QPen( self.color_1, 1, Qt.SolidLine ) )
-        qfont = QFont( font )
-        qfont.setPointSizeF( letter_size )
-        painter.setFont( qfont )
-        painter.drawText( box, Qt.AlignCenter, text )
-
-        # Triangle
-        if self.drop == True:
-            Painter_Triangle( self, painter, self.w2, self.h2, self.side )
-
-        # Finish QPainter
-        painter.end()
+            event.acceptProposedAction()
+    # Items
+    def Dir_Model_Items( self, model, parent_path ):
+        # QDir
+        qdir = QDir()
+        qdir.setPath( parent_path )
+        qdir.setSorting( self.file_sort )
+        qdir.setFilter( QDir.AllEntries | QDir.NoSymLinks | QDir.NoDotAndDotDot )
+        info_list = qdir.entryInfoList()
+        # Model
+        model_list = list()
+        for item in info_list:
+            file_path = item.filePath()
+            model_item = self.Model_Item_Path( model, file_path )
+            model_list.append( model_item)
+        return model_list
+    def Model_Item_Path( self, model, url ):
+        model_item = model.index( url )
+        return model_item
 
 #endregion
+

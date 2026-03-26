@@ -29,6 +29,31 @@
           <statusTip></statusTip>
         </Action>
 
+        <Action name="imagine_board_extension_frame_minus">
+          <icon></icon>
+          <text>Frame Minus</text>
+          <whatsThis></whatsThis>
+          <toolTip></toolTip>
+          <iconText></iconText>
+          <activationFlags></activationFlags>
+          <activationConditions></activationConditions>
+          <shortcut>none</shortcut>
+          <isCheckable>false</isCheckable>
+          <statusTip></statusTip>
+        </Action>
+        <Action name="imagine_board_extension_frame_plus">
+          <icon></icon>
+          <text>Frame Plus</text>
+          <whatsThis></whatsThis>
+          <toolTip></toolTip>
+          <iconText></iconText>
+          <activationFlags></activationFlags>
+          <activationConditions></activationConditions>
+          <shortcut>none</shortcut>
+          <isCheckable>false</isCheckable>
+          <statusTip></statusTip>
+        </Action>
+
 
     </Actions>
 </ActionCollection>

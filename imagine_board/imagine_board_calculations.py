@@ -17,46 +17,50 @@
 
 #region Imports
 
+# Python
 import math
 import random
-from PyQt5 import QtCore
+import urllib
+# Krita
+from krita import *
+# PyQt5
+from PyQt5 import QtWidgets, QtCore, QtGui, uic
+# Plugin Modules
+from .imagine_board_constants import *
 
 #endregion
 
 
-#region Index
+#region Krita
 
-# List Converter
-def preview_to_grid( preview, gmx, gmy ):
-    length = len( preview )
-    grid_list = []
-    for i in range( 0, length, gmx ):
-        block = []
-        for j in range( 0, gmx ):
-            index = i + j
-            if index < length:
-                block.append( preview[index] )
-            else:
-                block.append( None )
-        grid_list.append( block )
-    return grid_list
-def grid_to_preview( grid ):
-    preview = []
-    for i in range( 0, len( grid ) ):
-        for j in range( 0, len( grid[i] ) ):
-            item = grid[i][j]
-            if item != None:
-                preview.append( grid[i][j] )
-    return preview
-# Index Converter
-def pi_to_gi( pi, gmx, gmy ):
-    div = pi / gmx
-    giy = int( div )
-    gix = round( ( div - giy ) * gmx )
-    return gix, giy
-def gi_to_pi( gix, giy, gmx ):
-    pi = giy * gmx + gix
-    return pi
+# Kritarc
+def Kritarc_Read( group, key, default, tipo ):
+    variable = default
+    read = Krita.instance().readSetting( group, key, "" )
+    if read not in [ "", None ]:
+        read = tipo( read )
+        if type( default ) == type( read ):
+            variable = read
+    if variable == default:
+        Kritarc_Write( group, key, default )
+    return variable
+def Kritarc_Write( group, key, value ):
+    Krita.instance().writeSetting( group, key, str( value ) )
+
+# Communication
+def Message_Log( operation, message ):
+    string = f"{ DOCKER_NAME } | { operation } { message }"
+    try:QtCore.qDebug( string )
+    except:pass
+def Message_Warnning( operation, message ):
+    string = f"{ DOCKER_NAME } | { operation } { message }"
+    QMessageBox.information( QWidget(), i18n( "Warnning" ), i18n( string ) )
+def Message_Float( operation, message, icon ):
+    ki = Krita.instance()
+    string = f"{ DOCKER_NAME } | { operation } { message }"
+    ki.activeWindow().activeView().showFloatingMessage( string, ki.icon( icon ), 5000, 0 )
+def Message_Error( error="null image" ):
+    Message_Float( "ERROR", str( error ), "broken-preset" )
 
 #endregion
 #region Limiters
@@ -93,6 +97,10 @@ def Limit_Angle( angle, inter ):
     else: # Odd
         angle = ( angle + 1 ) * inter
     return angle
+def Limit_Mini( value, minimum ):
+    if value <= minimum:
+        value = minimum
+    return value
 
 #endregion
 #region Range
@@ -160,5 +168,132 @@ def Trig_2D_Triangle_Extrapolation( x1, y1, x2, y2, percent_12, percent_23 ):
     x3 = x2 + p23_hor
     y3 = y2 + p23_ver
     return x3, y3
+
+#endregion
+#region Compressed
+
+# Compressed
+def Compressed_QPixmap( archive, name ):
+    qpixmap = None
+    buffer = Compressed_Buffer( archive, name )
+    reader = QImageReader( buffer )
+    if reader.canRead():
+        reader.setAutoTransform( True )
+        qpixmap = QPixmap().fromImageReader( reader )
+    return qpixmap
+def Compressed_Buffer( archive, name ):
+    # Archive
+    extract = archive.open( name )
+    image_data = extract.read()
+    # Buffer
+    byte_array = QByteArray( image_data )
+    buffer = QBuffer()
+    buffer.setData( byte_array )
+    buffer.open( QIODevice.OpenModeFlag.ReadOnly )
+    # Return
+    return buffer
+def Compressed_Sort( lista ):
+    list_name = list()
+    list_order = list()
+    for item in lista:
+        list_name.append( [ os.path.basename( item ), item ] )
+    list_name.sort()
+    for item in list_name:
+        list_order.append( item[1] )
+    return list_order
+
+#endregion
+#region Metadata
+
+def Metadata_Read( url ):
+    qimage_reader = QImageReader( url )
+    text = qimage_reader.text( metadata_key )
+    return text
+def Metadata_Write( mode, tag, url ):
+    basename = os.path.basename( url )
+    try:
+        # Reader
+        reader = QImageReader( url )
+        rformat = reader.format()
+        text = reader.text( metadata_key )
+        # Variables
+        if len( tag ) > 0:
+            tag = set( tag )
+        text = set( text.split( " " ) )
+        # Mode
+        if mode == "KEY_ADD":       keywords = text|tag
+        elif mode == "KEY_REPLACE": keywords = tag
+        elif mode == "KEY_REMOVE":  keywords = text-tag
+        elif mode == "KEY_CLEAN":   keywords = set( "" )
+        # Write
+        if text != keywords:
+            # Variables
+            keywords = list( keywords )
+            keywords.sort()
+            keywords = " ".join( keywords )
+            # QImage
+            qimage = reader.read()
+            # Write
+            writer = QImageWriter()
+            writer.setText( metadata_key, str( keywords ) )
+            writer.setCompression( 0 )
+            wformat = writer.supportedImageFormats()
+            if rformat in wformat:
+                writer.setFileName( url )
+                writer.write( qimage )
+                if mode == "KEY_CLEAN":
+                    keywords = "*"
+                string = f"{ DOCKER_NAME } | WRITE { keywords } >> { basename }"
+            else:
+                string = f"{ DOCKER_NAME } | ERROR format not supported | { basename }"
+        else:
+            string = f"{ DOCKER_NAME } | SAME no change | { basename }"
+    except Exception as e:
+        string = f"{ DOCKER_NAME } | ERROR { e } | { basename }"
+    try:QtCore.qDebug( string )
+    except:pass
+
+#endregion
+#region Internet
+
+# Internet
+def Check_Html( url ):
+    if QtCore.QUrl( url ).scheme() in file_web:
+        boolean = True
+    else:
+        boolean = False
+    return boolean
+def Download_QPixmap( url ):
+    qpixmap = None
+    data = Download_Data( url )
+    if data != None:
+        pix = QtGui.QPixmap()
+        pix.loadFromData( data )
+        if pix.isNull() == False:
+            qpixmap = pix
+    return qpixmap
+def Download_Data( url ):
+    # replace user agent from : https://httpbin.io/headers
+    try:
+        headers = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:146.0) Gecko/20100101 Firefox/146.0" }
+        request = urllib.request.Request( url, headers=headers )
+        response = urllib.request.urlopen( request )
+        data = response.read()
+    except:
+        data = None
+    return data
+
+#endregion
+#region Troubleshooting
+
+# Inspect
+def Inspect():
+    functions = list()
+    ins = inspect.stack()
+    for item in ins:
+        functions.append( item[3] )
+    string = f"Inspect = { functions }"
+    QtCore.qDebug( string )
+    # QMessageBox.information( QWidget(), i18n( "Warnning" ), i18n( string ) )
 
 #endregion

@@ -26,6 +26,7 @@ from PyQt5.Qt import Qt
 
 class ImagineBoard_Extension( Extension ):
     SIGNAL_BROWSE = QtCore.pyqtSignal( int )
+    SIGNAL_FRAME = QtCore.pyqtSignal( int )
 
     #region Initialize
 
@@ -43,12 +44,16 @@ class ImagineBoard_Extension( Extension ):
         action_imagine_board = window.createAction( "imagine_board_menu", "Imagine Board", "tools/scripts" )
         action_imagine_board.setMenu( menu_imagine_board )
 
-        # Actions
+        # Actions Browse
         action_browse_minus = window.createAction( "imagine_board_extension_browse_minus", "Browse Minus", "tools/scripts/imagine_board_menu" )
         action_browse_minus.triggered.connect( self.Browse_Minus )
-
         action_browse_plus = window.createAction( "imagine_board_extension_browse_plus", "Browse Plus", "tools/scripts/imagine_board_menu" )
         action_browse_plus.triggered.connect( self.Browse_Plus )
+        # Actions Frame
+        action_frame_minus = window.createAction( "imagine_board_extension_frame_minus", "Frame Minus", "tools/scripts/imagine_board_menu" )
+        action_frame_minus.triggered.connect( self.Frame_Minus )
+        action_frame_plus = window.createAction( "imagine_board_extension_frame_plus", "Frame Plus", "tools/scripts/imagine_board_menu" )
+        action_frame_plus.triggered.connect( self.Frame_Plus )
 
     #endregion
     #region Functions
@@ -57,5 +62,10 @@ class ImagineBoard_Extension( Extension ):
         self.SIGNAL_BROWSE.emit( -1 )
     def Browse_Plus( self ):
         self.SIGNAL_BROWSE.emit( +1 )
+
+    def Frame_Minus( self ):
+        self.SIGNAL_FRAME.emit( -1 )
+    def Frame_Plus( self ):
+        self.SIGNAL_FRAME.emit( +1 )
 
     #endregion
