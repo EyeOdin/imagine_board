@@ -1250,7 +1250,6 @@ class ImagineBoard_Preview( QtWidgets.QWidget ):
         # Disable Menu
         if ppp == True:
             menu_preview.setEnabled( False )
-            menu_overlay.setEnabled( False )
             menu_file.setEnabled( False )
             menu_edit.setEnabled( False )
             menu_insert.setEnabled( False )
