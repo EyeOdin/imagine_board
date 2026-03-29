@@ -304,9 +304,12 @@ def ColorPicker_Event( self, ex, ey, qimage_grab, state_press ):
             # Previous
             self.color_previous = qcolor
             # Clipboard
-            clip_board = QApplication.clipboard()
-            clip_board.clear()
-            clip_board.setText( str( hex_code ) )
+            try:
+                clip_board = QApplication.clipboard()
+                clip_board.clear()
+                clip_board.setText( str( hex_code ) )
+            except:
+                pass
 def ColorPicker_Render( self, painter, ex, ey ):
     # Values
     ex = Limit_Range( ex, 0, self.ww )
