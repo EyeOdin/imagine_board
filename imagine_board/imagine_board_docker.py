@@ -190,7 +190,7 @@ class ImagineBoard_Docker( DockWidget ):
         self.reorder_list_url = list()
 
         # Drive
-        self.drive_url = None
+        self.drive_url = str() # No input for the root is my input
         self.drive_model = None
         self.drive_tree_view = None
         # System
@@ -2857,10 +2857,12 @@ class ImagineBoard_Docker( DockWidget ):
 
     def Drive_Widget( self ):
         # Detect Drives
-        drives = list()
-        for drive in os.popen('wmic logicaldisk get caption').read().split()[1:]:
-            drives.append( drive )
-        self.drive_url = drives[2][0]
+        # self.drive_url = list()
+        # list_drive = QtCore.QDir().drives()
+        # for drive in list_drive:
+        #     path = os.path.normpath( drive.filePath() )
+        #     self.drive_url.append( path )
+
         # Drive Model
         self.Drive_Model()
 
@@ -3769,7 +3771,7 @@ Testes:
 
 New:
 - Color Picker is a button now
-- Color Analyze is inside File/Pin menu
+- Color Analyze is inside Color menu
 - Grid Mode refactored
 - Small Browsing Tweaks
 - Footer UI refactor
@@ -3800,4 +3802,5 @@ New:
     - Pre Multiply Images
 - Display Bundle files
 - Reference now handles its own memory and files
+- Send Files to Pigmento Sampler to have a LUT applied to it
 """
