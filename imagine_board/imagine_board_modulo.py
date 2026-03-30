@@ -429,25 +429,17 @@ def Insert_Document( self, image_url, clip ):
     else:
         Message_Error()
 def Insert_Layer( self, image_url, clip ):
-    check_exists = os.path.exists( image_url )
-    check_file = os.path.exists( image_url )
     check_insert = Check_Insert()
-    if check_exists == True and check_file == True and check_insert == True:
-        check_vector = Check_Vector( image_url )
-        if check_vector == True:
-            Embed_Layer_Vector( self, image_url )
-        else:
-            Embed_Layer_Pixel( self, image_url, clip )
+    check_vector = Check_Vector( image_url )
+    if check_insert == True:
+        if check_vector == True:    Embed_Layer_Vector( self, image_url )
+        else:                       Embed_Layer_Pixel( self, image_url, clip )
     else:
         Message_Error()
 def Insert_Reference( self, image_url, clip ):
-    check_exists = os.path.exists( image_url )
-    check_file = os.path.exists( image_url )
     check_insert = Check_Insert()
-    if check_exists == True and check_file == True and check_insert == True:
-        Embed_Reference_Pixel( self, image_url, clip )
-    else:
-        Message_Error()
+    if check_insert == True:    Embed_Reference_Pixel( self, image_url, clip )
+    else:                       Message_Error()
 def Insert_Drag( self, image_url, clip, grid ):
     check_file = os.path.isfile( image_url )
     check_dir = os.path.isdir( image_url )
@@ -547,7 +539,8 @@ def Embed_Layer_Vector( self, image_url ):
 def Embed_Layer_Pixel( self, image_url, clip ):
     try:
         # Qimage
-        qpixmap = Create_Image_Clip( self, image_url, clip )
+        if os.path.isfile( image_url ) == True: qpixmap = Create_Image_Clip( self, image_url, clip )
+        elif Check_Html( image_url ) == True:   qpixmap = Download_QPixmap( image_url )
         qimage = qpixmap.toImage()
         ptr = qimage.constBits()
         ptr.setsize( qimage.byteCount() )
@@ -566,7 +559,8 @@ def Embed_Layer_Pixel( self, image_url, clip ):
 def Embed_Reference_Pixel( self, image_url, clip ):
     try:
         # Image
-        qpixmap = Create_Image_Clip( self, image_url, clip )
+        if os.path.isfile( image_url ) == True: qpixmap = Create_Image_Clip( self, image_url, clip )
+        elif Check_Html( image_url ) == True:   qpixmap = Download_QPixmap( image_url )
         mimedata = Create_Mime_Data( image_url, qpixmap )
         clipboard = QApplication.clipboard().setMimeData( mimedata )
         # Place Image
