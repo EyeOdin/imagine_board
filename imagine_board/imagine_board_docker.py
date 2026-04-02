@@ -2909,12 +2909,13 @@ class ImagineBoard_Docker( DockWidget ):
     # Actions
     def Drive_Move( self ):
         # Variables
+        preview_index = self.preview_index
         model_index = self.drive_tree_view.currentIndex()
         path = os.path.normpath( self.drive_model.filePath( model_index ) )
         if os.path.isfile( path ) == True:  directory = os.path.dirname( path )
         else:                               directory = path
         # Panel
-        if self.mode_index == 0:    list_url = [ self.list_url[ self.preview_index ] ]
+        if self.mode_index == 0:    list_url = [ self.list_url[ preview_index ] ]
         if self.mode_index == 1:    list_url = self.panel_grid.Selection_List()
         if self.mode_index == 2:    list_url = self.panel_reference.Pin_Selected()
         # Cycle
@@ -2926,7 +2927,11 @@ class ImagineBoard_Docker( DockWidget ):
             if boolean == True: Message_Log( "MOVE", destination )
             else:               Message_Log( "ERROR", destination )
         # Refresh
-        if self.mode_index == 2:    list_url = self.panel_reference.Board_Refresh()
+        if self.mode_index in [ 0, 1 ]:
+            preview_index = Limit_Range( preview_index - 1, 0, self.preview_max - 1 )
+            self.Filter_Files( self.search_string, None, preview_index )
+        if self.mode_index == 2:
+            self.panel_reference.Board_Refresh()
 
     #endregion
     #region Watcher
