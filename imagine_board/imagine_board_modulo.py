@@ -2542,10 +2542,13 @@ class ImagineBoard_Grid( QtWidgets.QWidget ):
             url = self.list_url[ self.list_index ]
             qpixmap = self.list_qpixmap[ self.list_index ]
             select_url = self.Selection_List()
+            list_url = [ url ]
+            list_url.extend( select_url )
         except:
             url = None
             qpixmap = None
             select_url = None
+            list_url = None
         # Cursor
         Icon_Cursor( self.state_pickcolor, self.state_press )
 
@@ -2653,8 +2656,6 @@ class ImagineBoard_Grid( QtWidgets.QWidget ):
                 qimage = qpixmap.toImage()
                 Color_Analyse( self.pigmento_picker, qimage )
             if action == action_color_lut:
-                list_url = [ url ]
-                list_url.extend( select_url )
                 Color_LUT_to_Image( self.pigmento_sampler, list_url )
             # Insert
             if action == action_insert_document:
@@ -3804,6 +3805,13 @@ class ImagineBoard_Reference( QtWidgets.QWidget ):
                 del draw
             # Garbage
             del qpixmap
+    def Pin_Selected( self ):
+        list_url = list()
+        for i in range( 0, self.pin_count ):
+            item = self.pin_list[i]
+            if ( item["active"] == True or item["select"] == True ) and ( item["tipo"] == "image" ):
+                list_url.append( item["url"] )
+        return list_url
 
     # QPixmap
     def Edit_QPixmap( self, source, egs, efx, efy ):
@@ -6775,7 +6783,7 @@ class Drive_TreeView( QtWidgets.QTreeView ):
     def __init__( self, parent ):
         super( Drive_TreeView, self ).__init__( parent )
         # Variables
-        self.file_sort = QDir.Name
+        self.file_sort = QDir.LocaleAware
 
     # Relay    
     def Set_File_Sort( self, file_sort ):

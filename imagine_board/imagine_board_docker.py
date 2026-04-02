@@ -193,6 +193,8 @@ class ImagineBoard_Docker( DockWidget ):
         self.drive_url = str() # No input for the root is my input
         self.drive_model = None
         self.drive_tree_view = None
+        self.drive_sort = QDir.LocaleAware
+
         # System
         self.sow_imagine = False
         self.sow_dockers = False
@@ -308,7 +310,7 @@ class ImagineBoard_Docker( DockWidget ):
         #region Drive
 
         self.Drive_Widget()
-        self.drive_tree_view.clicked.connect( self.Drive_Action )
+        self.drive_tree_view.clicked.connect( self.Drive_Click )
 
         #endregion
         #region System
@@ -2856,13 +2858,6 @@ class ImagineBoard_Docker( DockWidget ):
     #region Drive
 
     def Drive_Widget( self ):
-        # Detect Drives
-        # self.drive_url = list()
-        # list_drive = QtCore.QDir().drives()
-        # for drive in list_drive:
-        #     path = os.path.normpath( drive.filePath() )
-        #     self.drive_url.append( path )
-
         # Drive Model
         self.Drive_Model()
 
@@ -2887,19 +2882,51 @@ class ImagineBoard_Docker( DockWidget ):
         self.drive_tree_view.setSortingEnabled( True )
         # Model View
         self.Drive_Tree_View()
+        # Event Filters
+        self.drive_tree_view.installEventFilter( self )
     def Drive_Model( self ):
         self.drive_model = QFileSystemModel()
         self.drive_model.setRootPath( self.drive_url )
         self.drive_model.setOption( QFileSystemModel.DontUseCustomDirectoryIcons )
-        self.drive_model.sort( self.Sort_File( self.sync_sort ) )
+        # self.drive_model.sort( self.Sort_File( self.drive_sort ) )
+        self.drive_model.sort( self.drive_sort )
     def Drive_Tree_View( self ):
-        self.drive_tree_view.Set_File_Sort( self.Sort_File( self.sync_sort ) )
+        self.drive_tree_view.Set_File_Sort( self.Sort_File( self.drive_sort ) )
         self.drive_tree_view.setModel( self.drive_model )
         self.drive_tree_view.setRootIndex( self.drive_model.index( self.drive_url ) )
         self.drive_tree_view.setColumnWidth( 0, 400 )
-    def Drive_Action( self, url ):
+
+    # Signals
+    def Drive_Click( self, url ):
         try:QtCore.qDebug( f"url = { url.data() }" )
         except:QtCore.qDebug( f"url = { url }" )
+    def Drive_Menu( self, event ):
+        qmenu = QMenu( self )
+        action_move = qmenu.addAction( "Move Selected Here" )
+        action = qmenu.exec_( self.drive_tree_view.mapToGlobal( event.pos() ) )
+        if action == action_move:
+            self.Drive_Move()
+    # Actions
+    def Drive_Move( self ):
+        # Variables
+        model_index = self.drive_tree_view.currentIndex()
+        path = os.path.normpath( self.drive_model.filePath( model_index ) )
+        if os.path.isfile( path ) == True:  directory = os.path.dirname( path )
+        else:                               directory = path
+        # Panel
+        if self.mode_index == 0:    list_url = [ self.list_url[ self.preview_index ] ]
+        if self.mode_index == 1:    list_url = self.panel_grid.Selection_List()
+        if self.mode_index == 2:    list_url = self.panel_reference.Pin_Selected()
+        # Cycle
+        for url in list_url:
+            basename = os.path.basename( url )
+            destination = os.path.normpath( os.path.join( directory, basename ) )
+            qfile = QFile( url )
+            boolean = qfile.rename( destination )
+            if boolean == True: Message_Log( "MOVE", destination )
+            else:               Message_Log( "ERROR", destination )
+        # Refresh
+        if self.mode_index == 2:    list_url = self.panel_reference.Board_Refresh()
 
     #endregion
     #region Watcher
@@ -3049,6 +3076,9 @@ class ImagineBoard_Docker( DockWidget ):
         # Keyenter
         if ( et == QEvent.ContextMenu and source is self.dialog.keyenter_widget_key ):
             self.Keyenter_Key_Menu( event )
+        # Drive
+        if ( et == QEvent.ContextMenu and source is self.drive_tree_view ):
+            self.Drive_Menu( event )
         return super().eventFilter( source, event )
 
     def canvasChanged( self, canvas ):
@@ -3139,6 +3169,15 @@ class ImagineBoard_Docker( DockWidget ):
 
     """
     qimage.convertTo( QImage.Format_ARGB32_Premultiplied )
+    """
+
+    """
+    # Detect Drives
+    self.drive_url = list()
+    list_drive = QtCore.QDir().drives()
+    for drive in list_drive:
+        path = os.path.normpath( drive.filePath() )
+        self.drive_url.append( path )
     """
 
     #endregion
