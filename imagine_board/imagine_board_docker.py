@@ -193,7 +193,6 @@ class ImagineBoard_Docker( DockWidget ):
         self.drive_url = str() # No input for the root is my input
         self.drive_model = None
         self.drive_tree_view = None
-        self.drive_sort = QDir.LocaleAware
 
         # System
         self.sow_imagine = False
@@ -1015,7 +1014,7 @@ class ImagineBoard_Docker( DockWidget ):
             self.Sort_Update( self.list_url, self.sync_sort, self.sort_reverse )
         # Drive Tree View
         self.Drive_Model()
-        self.Drive_Tree_View()
+        self.Drive_Tree_View() # In case sorting inside Tree View changes
         # Save
         Kritarc_Write( DOCKER_NAME, "sync_sort", self.sync_sort )
     # Item Modifiers
@@ -1644,15 +1643,15 @@ class ImagineBoard_Docker( DockWidget ):
 
     # Sort
     def Sort_File( self, sync_sort ):
-        file_sort = QDir.LocaleAware
-        if sync_sort == "Name":         file_sort = QDir.Name
-        elif sync_sort == "Time":       file_sort = QDir.Time
-        elif sync_sort == "Size":       file_sort = QDir.Size
-        elif sync_sort == "Type":       file_sort = QDir.Type
-        elif sync_sort == "Unsorted":   file_sort = QDir.Unsorted
-        elif sync_sort == "NoSort":     file_sort = QDir.NoSort
-        elif sync_sort == "Reversed":   file_sort = QDir.Reversed
-        elif sync_sort == "IgnoreCase": file_sort = QDir.IgnoreCase
+        file_sort = QtCore.QDir.LocaleAware
+        if sync_sort == "Name":         file_sort = QtCore.QDir.Name
+        elif sync_sort == "Time":       file_sort = QtCore.QDir.Time
+        elif sync_sort == "Size":       file_sort = QtCore.QDir.Size
+        elif sync_sort == "Type":       file_sort = QtCore.QDir.Type
+        elif sync_sort == "Unsorted":   file_sort = QtCore.QDir.Unsorted
+        elif sync_sort == "NoSort":     file_sort = QtCore.QDir.NoSort
+        elif sync_sort == "Reversed":   file_sort = QtCore.QDir.Reversed
+        elif sync_sort == "IgnoreCase": file_sort = QtCore.QDir.IgnoreCase
         return file_sort
     def Sort_List( self, list_url, sync_sort, sort_reverse ):
         if sync_sort in [ "Name", "Time", "Size", "Type", "Dimension" ]:
@@ -2860,7 +2859,6 @@ class ImagineBoard_Docker( DockWidget ):
     def Drive_Widget( self ):
         # Drive Model
         self.Drive_Model()
-
         # Drive Tree View ( Promoted Widgets dont work, so construct a widget by code )
         self.drive_tree_view = Drive_TreeView( self ) # Promoted Widget
         self.drive_tree_view.setObjectName( "tree_view" )
@@ -2886,34 +2884,35 @@ class ImagineBoard_Docker( DockWidget ):
         self.drive_tree_view.installEventFilter( self )
     def Drive_Model( self ):
         self.drive_model = QFileSystemModel()
+        self.drive_model.setFilter( QDir.Drives | QDir.AllDirs | QDir.NoSymLinks | QDir.NoDotAndDotDot | QDir.Files )
         self.drive_model.setRootPath( self.drive_url )
         self.drive_model.setOption( QFileSystemModel.DontUseCustomDirectoryIcons )
-        # self.drive_model.sort( self.Sort_File( self.drive_sort ) )
-        self.drive_model.sort( self.drive_sort )
     def Drive_Tree_View( self ):
-        self.drive_tree_view.Set_File_Sort( self.Sort_File( self.drive_sort ) )
+        self.drive_tree_view.sortByColumn( 0, Qt.SortOrder.AscendingOrder )
         self.drive_tree_view.setModel( self.drive_model )
         self.drive_tree_view.setRootIndex( self.drive_model.index( self.drive_url ) )
-        self.drive_tree_view.setColumnWidth( 0, 400 )
+        self.drive_tree_view.setColumnWidth( 0, 300 )
 
     # Signals
     def Drive_Click( self, url ):
         try:QtCore.qDebug( f"url = { url.data() }" )
         except:QtCore.qDebug( f"url = { url }" )
     def Drive_Menu( self, event ):
-        qmenu = QMenu( self )
-        action_move = qmenu.addAction( "Move Selected Here" )
-        action = qmenu.exec_( self.drive_tree_view.mapToGlobal( event.pos() ) )
-        if action == action_move:
-            self.Drive_Move()
-    # Actions
-    def Drive_Move( self ):
         # Variables
-        preview_index = self.preview_index
         model_index = self.drive_tree_view.currentIndex()
         path = os.path.normpath( self.drive_model.filePath( model_index ) )
         if os.path.isfile( path ) == True:  directory = os.path.dirname( path )
         else:                               directory = path
+        # Menu
+        qmenu = QMenu( self )
+        action_move = qmenu.addAction( f"Move Selected to [ { os.path.basename( directory ) } ]" )
+        action = qmenu.exec_( self.drive_tree_view.mapToGlobal( event.pos() ) )
+        if action == action_move:
+            self.Drive_Move( directory )
+    # Actions
+    def Drive_Move( self, directory ):
+        # Variables
+        preview_index = self.preview_index
         # Panel
         if self.mode_index == 0:    list_url = [ self.list_url[ preview_index ] ]
         if self.mode_index == 1:    list_url = self.panel_grid.Selection_List()
@@ -2926,9 +2925,10 @@ class ImagineBoard_Docker( DockWidget ):
             boolean = qfile.rename( destination )
             if boolean == True: Message_Log( "MOVE", destination )
             else:               Message_Log( "ERROR", destination )
+            del qfile
         # Refresh
         if self.mode_index in [ 0, 1 ]:
-            preview_index = Limit_Range( preview_index - 1, 0, self.preview_max - 1 )
+            preview_index = Limit_Range( preview_index + 1, 0, self.preview_max - 1 )
             self.Filter_Files( self.search_string, None, preview_index )
         if self.mode_index == 2:
             self.panel_reference.Board_Refresh()

@@ -6782,13 +6782,6 @@ class Drive_TreeView( QtWidgets.QTreeView ):
     # Init
     def __init__( self, parent ):
         super( Drive_TreeView, self ).__init__( parent )
-        # Variables
-        self.file_sort = QDir.LocaleAware
-
-    # Relay    
-    def Set_File_Sort( self, file_sort ):
-        self.file_sort = file_sort
-        self.update()
 
     # Interaction
     def dragEnterEvent( self, event: QDragEnterEvent ):
@@ -6833,7 +6826,7 @@ class Drive_TreeView( QtWidgets.QTreeView ):
         # QDir
         qdir = QDir()
         qdir.setPath( parent_path )
-        qdir.setSorting( self.file_sort )
+        qdir.setSorting( QDir.Name )
         qdir.setFilter( QDir.AllEntries | QDir.NoSymLinks | QDir.NoDotAndDotDot )
         info_list = qdir.entryInfoList()
         # Model
@@ -6848,4 +6841,3 @@ class Drive_TreeView( QtWidgets.QTreeView ):
         return model_item
 
 #endregion
-
