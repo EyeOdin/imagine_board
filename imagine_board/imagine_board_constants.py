@@ -66,7 +66,7 @@ extensions = [
     "xbm",
     "xpm",
     # PDF
-    "pdf",
+    # "pdf",
     # Vector
     "svg",
     "svgz",

@@ -18,6 +18,7 @@
 #region Imports
 
 # Python Modules
+import string
 import inspect
 import sys
 import copy
@@ -96,6 +97,7 @@ class ImagineBoard_Docker( DockWidget ):
         self.state_inside = False
         self.state_transparent = False
         self.state_cycle = False
+        self.state_keyenter = False
 
         # UI
         self.mode_index = 0
@@ -649,17 +651,13 @@ class ImagineBoard_Docker( DockWidget ):
         self.panel_grid.Set_ColorPicker( self.colorpicker )
         self.panel_reference.Set_ColorPicker( self.colorpicker )
         # Style
-        if boolean == True:
-            self.layout.colorpicker.setIcon( self.qicon_colorpicker_on )
-        else:
-            self.layout.colorpicker.setIcon( self.qicon_colorpicker_off )
+        if boolean == True: self.layout.colorpicker.setIcon( self.qicon_colorpicker_on )
+        else:               self.layout.colorpicker.setIcon( self.qicon_colorpicker_off )
     def Extra_Control( self, boolean ):
         # Variables
         self.extra_control = boolean
-        if boolean == True:
-            self.layout.control.setIcon( self.qicon_control_down )
-        if boolean == False:
-            self.layout.control.setIcon( self.qicon_control_up )
+        if boolean == True:     self.layout.control.setIcon( self.qicon_control_down )
+        if boolean == False:    self.layout.control.setIcon( self.qicon_control_up )
         # Widgets
         self.layout.preview_control.setMaximumHeight( int( boolean * qt_max ) )
         self.layout.grid_control.setMaximumHeight( int( boolean * qt_max ) )
@@ -675,8 +673,8 @@ class ImagineBoard_Docker( DockWidget ):
         self.layout.progress_bar.setMaximum( 1 )
     # Slider
     def Slider_Press( self, boolean ):
-        if self.mode_index == 0:pass
-        if self.mode_index == 1:self.panel_grid.Set_Press( boolean )
+        if self.mode_index == 0:    pass
+        if self.mode_index == 1:    self.panel_grid.Set_Press( boolean )
     # Search
     def Search_Label( self, string ):
         self.layout.search.setPlaceholderText( string )
@@ -1856,9 +1854,9 @@ class ImagineBoard_Docker( DockWidget ):
     # Display Update
     def Display_Update( self, update ):
         self.Display_Sync()
-        if self.mode_index == 0:self.Display_Preview( update )
-        if self.mode_index == 1:self.Display_Grid( update )
-        if self.mode_index == 2:self.Display_Reference( update )
+        if self.mode_index == 0:    self.Display_Preview( update )
+        if self.mode_index == 1:    self.Display_Grid( update )
+        if self.mode_index == 2:    self.Display_Reference( update )
     # Display Actions
     def Display_Sync( self ):
         Kritarc_Write( DOCKER_NAME, "preview_index", self.preview_index )
@@ -2561,6 +2559,7 @@ class ImagineBoard_Docker( DockWidget ):
         if thread == False: self.Keyenter_Single( list_key, list_url )
         if thread == True:  self.Keyenter_Thread( list_key, list_url )
     def Keyenter_Connect( self ):
+        self.state_keyenter = True
         self.keyenter_worker = Worker_Keyenter()
         self.keyenter_worker.SIGNAL_TEXT.connect( self.Search_Label )
         self.keyenter_worker.SIGNAL_PB_VALUE.connect( self.Dialog_ProgressBar_Value )
@@ -2594,6 +2593,7 @@ class ImagineBoard_Docker( DockWidget ):
             )
         self.keyenter_qthread.start()
     def Keyenter_Finish( self ):
+        self.state_keyenter = False
         self.Display_Update( True )
         QApplication.beep()
 
@@ -2918,13 +2918,49 @@ class ImagineBoard_Docker( DockWidget ):
         if self.mode_index == 1:    list_url = self.panel_grid.Selection_List()
         if self.mode_index == 2:    list_url = self.panel_reference.Pin_Selected()
         # Cycle
-        for url in list_url:
-            basename = os.path.basename( url )
-            destination = os.path.normpath( os.path.join( directory, basename ) )
-            qfile = QFile( url )
-            boolean = qfile.rename( destination )
-            if boolean == True: Message_Log( "MOVE", destination )
-            else:               Message_Log( "ERROR", destination )
+        for source_url in list_url:
+            # Variables
+            source_basename = os.path.basename( source_url )
+            destination_url = os.path.normpath( os.path.join( directory, source_basename ) )
+            destination_basename = os.path.basename( destination_url )
+            # check_exists, destination_url = self.Drive_Check( destination_url )
+            check_exists = os.path.exists( destination_url )
+            # File
+            qfile = QFile( source_url )
+            if check_exists == True:
+                # Pixmaps
+                qis = QPixmap( source_url ).scaled( 200, 200, Qt.KeepAspectRatio, Qt.FastTransformation )
+                qid = QPixmap( destination_url ).scaled( 200, 200, Qt.KeepAspectRatio, Qt.FastTransformation )
+                sw = qis.width()
+                sh = qis.height()
+                dw = qid.width()
+                dh = qid.height()
+                # Container
+                qpixmap = QPixmap( max( sw, dw ), sh + dh )
+                qpixmap.fill( Qt.transparent )
+                painter = QPainter( qpixmap )
+                painter.drawPixmap( 0, 0, qis )
+                painter.drawPixmap( 0, sh, qid )
+                painter.end()
+
+                # Text
+                Message_Log( "EXISTS", destination_url )
+                message = f"File already exists\n\nsource = { source_basename } ({ sw }x{ sh })\n\ndestination = { destination_basename } ({ dw }x{ dh })"
+
+                # Message Box
+                qmessage_box = QMessageBox()
+                qmessage_box.setText( message )
+                qmessage_box.setStandardButtons( QMessageBox.SaveAll | QMessageBox.Discard | QMessageBox.Abort );
+                qmessage_box.setIconPixmap( qpixmap )
+                answer = qmessage_box.exec()
+                # Answer
+                if answer == QMessageBox.SaveAll:
+                    destination_url = self.Drive_Check( destination_url )
+                    self.Drive_Transfer( qfile, destination_url )
+                if answer == QMessageBox.Discard:
+                    qfile.moveToTrash()
+            else:
+                self.Drive_Transfer( qfile, destination_url )
             del qfile
         # Refresh
         if self.mode_index in [ 0, 1 ]:
@@ -2932,6 +2968,29 @@ class ImagineBoard_Docker( DockWidget ):
             self.Filter_Files( self.search_string, None, preview_index )
         if self.mode_index == 2:
             self.panel_reference.Board_Refresh()
+    def Drive_Check( self, destination_url ):
+        # Cycle for new Destination url
+        for i in range( 0, 100 ):
+            # Random letters
+            index = str()
+            for i in range( 0, 5 ):
+                index += random.choice( string.ascii_letters )
+            # Path
+            split = destination_url.split( "." )
+            len_split = len( split )
+            destination_url = f"{ split[0] }_{ index }"
+            if len_split == 2:
+                destination_url += "." + split[1]
+            # Check
+            check_exists = os.path.exists( destination_url )
+            if check_exists == False:
+                break
+        # Return
+        return destination_url
+    def Drive_Transfer( self, qfile, destination_url ):
+        boolean = qfile.rename( destination_url )
+        if boolean == True: Message_Log( "MOVE", destination_url )
+        else:               Message_Log( "ERROR", destination_url )
 
     #endregion
     #region Watcher
@@ -2942,8 +3001,8 @@ class ImagineBoard_Docker( DockWidget ):
         try:self.qtimer_watcher.stop()
         except:pass
         # Progress Bar
-        self.ProgressBar_Value( 0 )
-        self.ProgressBar_Maximum( 0 )
+        # self.ProgressBar_Value( 0 )
+        # self.ProgressBar_Maximum( 0 )
         # Create new Instance to Update
         try:
             self.qtimer_watcher = QTimer( self )
@@ -3183,6 +3242,11 @@ class ImagineBoard_Docker( DockWidget ):
     for drive in list_drive:
         path = os.path.normpath( drive.filePath() )
         self.drive_url.append( path )
+    """
+
+    """
+    qpixmap = QPixmap( url_source )
+    trash = QMessageBox.question( qlabel, DOCKER_NAME, message, QMessageBox.Yes, QMessageBox.Abort )
     """
 
     #endregion
@@ -3458,7 +3522,16 @@ class Worker_Cycle( QtCore.QObject ):
         basename = basename.replace( self.tag_null, "" )
         basename = basename.replace( self.tag_original, "" )
         basename = basename.replace( self.tag_copy, "" )
-        basename = basename.replace( " - Copy", "2" ) # Windows clean up
+        basename = basename.replace( " - Copy", "" ) # Windows clean up
+        basename = basename.replace( " (1)", "" )
+        basename = basename.replace( " (2)", "" )
+        basename = basename.replace( " (3)", "" )
+        basename = basename.replace( " (4)", "" )
+        basename = basename.replace( " (5)", "" )
+        basename = basename.replace( " (6)", "" )
+        basename = basename.replace( " (7)", "" )
+        basename = basename.replace( " (8)", "" )
+        basename = basename.replace( " (9)", "" )
         url_new = os.path.normpath( os.path.join( directory, basename ) )
         return url_new
 
