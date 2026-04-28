@@ -2923,7 +2923,6 @@ class ImagineBoard_Docker( DockWidget ):
             source_basename = os.path.basename( source_url )
             destination_url = os.path.normpath( os.path.join( directory, source_basename ) )
             destination_basename = os.path.basename( destination_url )
-            # check_exists, destination_url = self.Drive_Check( destination_url )
             check_exists = os.path.exists( destination_url )
             # File
             qfile = QFile( source_url )
