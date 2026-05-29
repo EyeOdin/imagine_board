@@ -2,7 +2,7 @@
 
 # Purpose
 
-Imagine Board is a Krita plugin to browse images and creates image boards.
+Imagine Board is a Krita plugin to browse images and creates reference mood boards.
 
 # Features
 
