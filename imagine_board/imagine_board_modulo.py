@@ -2925,6 +2925,7 @@ class ImagineBoard_Grid( QtWidgets.QWidget ):
                     check_kra = url.endswith( file_krita )
                     check_dir = os.path.isdir( url )
                     check_web = Check_Html( url )
+                    basename = os.path.basename( url )
                     render = True
                 except:
                     render = False
@@ -2934,7 +2935,7 @@ class ImagineBoard_Grid( QtWidgets.QWidget ):
                         if check_dir and self.qpixmap_dir != None: # Directory
                             self.Draw_Icon_Dir( painter, qpixmap, px, py, pw, ph ) # Image Inside
                             self.Draw_QPixmap( painter, self.qpixmap_dir, px, py, pw, ph ) # Folder Icon
-                            self.Draw_Text( painter, self.qpixmap_dir, px, py, pw, ph, os.path.basename( url ) )
+                            self.Draw_Text( painter, self.qpixmap_dir, px, py, pw, ph, basename )
                         elif check_comp and self.qpixmap_comp != None and check_kra == False: # Compressed ( ZIP )
                             self.Draw_QPixmap( painter, qpixmap, px, py, pw, ph ) # Image Inside
                             self.Draw_QPixmap( painter, self.qpixmap_comp, px, py, pw, ph ) # Comp Icon
@@ -4603,6 +4604,8 @@ class ImagineBoard_Reference( QtWidgets.QWidget ):
 
     # Garbage
     def Garbage_Clean( self ):
+        try:self.packer_qthread.quit()
+        except:pass
         try:del self.packer_qthread
         except:pass
         try:del self.packer_worker
@@ -5025,9 +5028,11 @@ class ImagineBoard_Reference( QtWidgets.QWidget ):
         return file_url
     # File
     def File_Read( self, url ):
-        with open( url, "r", encoding=encode ) as self.link_eo_access:
-            board = self.link_eo_access.readlines()
-            self.Data_Read( board )
+        if self.link_eo_access == None or self.link_eo_access.closed == True:
+            with open( url, "r", encoding=encode ) as self.link_eo_access:
+                board = self.link_eo_access.readlines()
+                self.Data_Read( board )
+            self.link_eo_access.close()
     def File_Write( self, url ):
         data = self.Data_Write()
         self.File_Access( url, data )
@@ -5037,7 +5042,8 @@ class ImagineBoard_Reference( QtWidgets.QWidget ):
     def File_Access( self, url, data ):
         if self.link_eo_access == None or self.link_eo_access.closed == True:
             with open( url, "w", encoding=encode ) as self.link_eo_access:
-                    self.link_eo_access.write( data )
+                self.link_eo_access.write( data )
+            self.link_eo_access.close()
     # Data
     def Data_Read( self, board ):
         # Variables
@@ -5703,9 +5709,6 @@ class ImagineBoard_Reference( QtWidgets.QWidget ):
     def closeEvent( self, event ):
         # Database
         self.Database_Close()
-        # Qthread
-        try:self.packer_qthread.quit()
-        except:pass
         # Garbage
         self.Garbage_Clean()
     # Painter Event

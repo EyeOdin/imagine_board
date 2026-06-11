@@ -1,4 +1,6 @@
 # Imagine Board is a Krita plugin to displays and organizes images.
+# Imagine Board is a Krita plugin to displays and organizes images.
+
 # Copyright ( C ) 2022  Ricardo Jeremias.
 #
 # This program is free software: you can redistribute it and/or modify
@@ -2098,13 +2100,13 @@ class ImagineBoard_Docker( DockWidget ):
             check_eo  = self.panel_reference.Get_EO_State() and self.state_load == False
             check_kra = self.panel_reference.Get_KRA_State()
             if check_eo == True or check_kra == True:
-                self.state_load = True
                 self.qtimer_reference = QTimer( self )
                 self.qtimer_reference.setSingleShot( True )
                 self.qtimer_reference.timeout.connect( self.Board_Load )
                 self.qtimer_reference.start( 3000 )
     def Board_Load( self ):
         self.panel_reference.Board_Refresh()
+        self.state_load = True
     # Pin
     def Pin_Insert( self, tipo, bx, by, text, url, clip ):
         # Variables
@@ -3531,6 +3533,8 @@ class Worker_Cycle( QtCore.QObject ):
         basename = basename.replace( " (7)", "" )
         basename = basename.replace( " (8)", "" )
         basename = basename.replace( " (9)", "" )
+        basename = basename.replace( " (9)", "" )
+        basename = basename.replace( " [ copy ]", "" )
         url_new = os.path.normpath( os.path.join( directory, basename ) )
         return url_new
 
